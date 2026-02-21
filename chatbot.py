@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from datetime import date
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote_plus
@@ -9,87 +10,100 @@ import requests
 
 
 class TodoChatbot:
+    PRIORITY_LEVELS = ("low", "medium", "high")
+    SUPPORTED_LANGUAGES = {
+        "english": "English",
+        "en": "English",
+        "hindi": "Hindi",
+        "hi": "Hindi",
+        "hinglish": "Hinglish",
+        "spanish": "Spanish",
+        "es": "Spanish",
+    }
+
     def __init__(self) -> None:
         self.storage_path = Path(os.getenv("TODO_STORE_PATH", "data/todos.json"))
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self.todos: list[dict[str, object]] = self._load_todos()
         self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
+        self.max_memory_messages = int(os.getenv("CHAT_MEMORY_MESSAGES", "12"))
+        self.session_memory: dict[str, list[dict[str, str]]] = {}
         self.system_prompt = (
             "You are a concise, helpful assistant for a todo app. "
             "Give practical answers and keep responses short. "
             "If user asks for product suggestions, recommend good options."
         )
 
-    def reply(self, message: str) -> str:
+    def reply(
+        self,
+        message: str,
+        session_id: str = "default",
+        language: str = "English",
+    ) -> str:
+        session_id = (session_id or "default").strip() or "default"
+        language = self._normalize_language(language)
+
         local_result = self._handle_todo_command(message)
         if local_result is not None:
+            self._remember_turn(session_id, message, local_result)
             return local_result
 
         product_result = self._handle_product_request(message)
         if product_result is not None:
+            self._remember_turn(session_id, message, product_result)
             return product_result
 
         if self.api_key:
-            llm_response = self._ask_openai(message)
+            llm_response = self._ask_openai(
+                message,
+                history=self._get_session_history(session_id),
+                language=language,
+            )
             if llm_response:
+                self._remember_turn(session_id, message, llm_response)
                 return llm_response
 
-        return self._fallback_response(message)
+        fallback = self._fallback_response(message)
+        self._remember_turn(session_id, message, fallback)
+        return fallback
 
     def _handle_todo_command(self, message: str) -> Optional[str]:
         text = message.strip()
         lower = text.lower()
 
         if lower in {"help", "commands"}:
-            return (
-                "Commands:\n"
-                "- add <task>\n"
-                "- list\n"
-                "- done <number>\n"
-                "- undone <number>\n"
-                "- delete <number>\n\n"
-                "- clear done\n"
-                "- clear all\n"
-                "- stats\n\n"
-                "Product queries:\n"
-                "- suggest laptop under 800\n"
-                "- best phone for gaming\n"
-                "- buy running shoes"
-            )
+            return self._help_text()
 
         add_match = re.match(r"^(add|new|todo)\s+(.+)$", text, flags=re.IGNORECASE)
         if add_match:
-            task = add_match.group(2).strip()
-            self.todos.append({"text": task, "done": False})
-            self._save_todos()
-            return f"Added task #{len(self.todos)}: {task}"
+            return self._add_todo(add_match.group(2).strip())
 
-        if lower in {"list", "tasks", "todos", "show tasks", "show todos"}:
-            if not self.todos:
-                return "No tasks yet. Add one with: add <task>"
-
-            lines = []
-            for idx, item in enumerate(self.todos, start=1):
-                status = "x" if bool(item["done"]) else " "
-                lines.append(f"{idx}. [{status}] {item['text']}")
-            return "\n".join(lines)
+        list_match = re.match(
+            r"^(?:list|tasks|todos|show tasks|show todos)"
+            r"(?:\s+(all|open|done|high|medium|low|today|overdue))?$",
+            lower,
+        )
+        if list_match:
+            return self._render_todo_list(list_match.group(1) or "all")
 
         done_match = re.match(r"^(done|complete|finish)\s+(\d+)$", lower)
         if done_match:
             idx = int(done_match.group(2))
-            if idx < 1 or idx > len(self.todos):
+            item = self._get_todo_by_index(idx)
+            if item is None:
                 return "Invalid task number."
-            self.todos[idx - 1]["done"] = True
+            item["done"] = True
             self._save_todos()
             return f"Marked task #{idx} as done."
 
         undone_match = re.match(r"^(undone|undo|reopen)\s+(\d+)$", lower)
         if undone_match:
             idx = int(undone_match.group(2))
-            if idx < 1 or idx > len(self.todos):
+            item = self._get_todo_by_index(idx)
+            if item is None:
                 return "Invalid task number."
-            self.todos[idx - 1]["done"] = False
+            item["done"] = False
             self._save_todos()
             return f"Marked task #{idx} as not done."
 
@@ -101,6 +115,52 @@ class TodoChatbot:
             removed = self.todos.pop(idx - 1)
             self._save_todos()
             return f"Deleted task #{idx}: {removed['text']}"
+
+        priority_match = re.match(
+            r"^(?:priority|set priority)\s+(\d+)\s+(low|medium|high)$", lower
+        )
+        if priority_match:
+            idx = int(priority_match.group(1))
+            item = self._get_todo_by_index(idx)
+            if item is None:
+                return "Invalid task number."
+            item["priority"] = priority_match.group(2)
+            self._save_todos()
+            return f"Updated priority of task #{idx} to {priority_match.group(2)}."
+
+        due_match = re.match(r"^(?:due|set due)\s+(\d+)\s+(\d{4}-\d{2}-\d{2}|none)$", lower)
+        if due_match:
+            idx = int(due_match.group(1))
+            item = self._get_todo_by_index(idx)
+            if item is None:
+                return "Invalid task number."
+
+            raw_due = due_match.group(2)
+            due_value = None
+            if raw_due != "none":
+                due_value = self._normalize_due_date(raw_due)
+                if due_value is None:
+                    return "Invalid due date format. Use YYYY-MM-DD."
+
+            item["due_date"] = due_value
+            self._save_todos()
+            if due_value is None:
+                return f"Removed due date from task #{idx}."
+            return f"Updated due date of task #{idx} to {due_value}."
+
+        search_match = re.match(r"^(?:search|find)\s+(.+)$", text, flags=re.IGNORECASE)
+        if search_match:
+            query = search_match.group(1).strip().lower()
+            if not query:
+                return "Please provide search text."
+            matches = [
+                (idx + 1, item)
+                for idx, item in enumerate(self.todos)
+                if query in str(item.get("text", "")).lower()
+            ]
+            if not matches:
+                return "No matching tasks found."
+            return "\n".join(self._format_todo_line(idx, item) for idx, item in matches)
 
         if lower in {"clear done", "clear completed", "remove done", "remove completed"}:
             before = len(self.todos)
@@ -116,17 +176,186 @@ class TodoChatbot:
             return f"Cleared all tasks ({count})."
 
         if lower in {"stats", "summary"}:
-            total = len(self.todos)
-            done = sum(1 for item in self.todos if bool(item["done"]))
-            open_items = total - done
-            return (
-                f"Task stats:\n"
-                f"- Total: {total}\n"
-                f"- Open: {open_items}\n"
-                f"- Done: {done}"
-            )
+            return self._stats_text()
 
         return None
+
+    def _add_todo(self, raw_task: str) -> str:
+        priority = "medium"
+        due_date: Optional[str] = None
+
+        priority_match = re.search(r"(?:^|\s)/p:(low|medium|high)\b", raw_task, re.IGNORECASE)
+        if priority_match:
+            priority = priority_match.group(1).lower()
+
+        due_match = re.search(r"(?:^|\s)/d:(\d{4}-\d{2}-\d{2}|none)\b", raw_task, re.IGNORECASE)
+        if due_match:
+            raw_due = due_match.group(1).lower()
+            if raw_due != "none":
+                normalized_due = self._normalize_due_date(raw_due)
+                if normalized_due is None:
+                    return "Invalid due date format. Use /d:YYYY-MM-DD"
+                due_date = normalized_due
+
+        cleaned_task = re.sub(
+            r"(?:^|\s)/p:(?:low|medium|high)\b",
+            " ",
+            raw_task,
+            flags=re.IGNORECASE,
+        )
+        cleaned_task = re.sub(
+            r"(?:^|\s)/d:(?:\d{4}-\d{2}-\d{2}|none)\b",
+            " ",
+            cleaned_task,
+            flags=re.IGNORECASE,
+        )
+        cleaned_task = re.sub(r"\s+", " ", cleaned_task).strip()
+
+        if not cleaned_task:
+            return (
+                "Task text is required. Example:\n"
+                "add buy groceries /p:high /d:2026-03-10"
+            )
+
+        todo = {
+            "text": cleaned_task,
+            "done": False,
+            "priority": priority,
+            "due_date": due_date,
+        }
+        self.todos.append(todo)
+        self._save_todos()
+
+        extras = [f"priority={priority}"]
+        if due_date:
+            extras.append(f"due={due_date}")
+        return f"Added task #{len(self.todos)}: {cleaned_task} ({', '.join(extras)})"
+
+    def _render_todo_list(self, mode: str) -> str:
+        if not self.todos:
+            return "No tasks yet. Add one with: add <task>"
+
+        mode = mode.lower()
+        today = date.today().isoformat()
+
+        def predicate(item: dict[str, object]) -> bool:
+            done = bool(item.get("done", False))
+            priority = self._normalize_priority(item.get("priority", "medium"))
+            due_value = self._normalize_due_date(item.get("due_date"))
+
+            if mode == "all":
+                return True
+            if mode == "open":
+                return not done
+            if mode == "done":
+                return done
+            if mode in self.PRIORITY_LEVELS:
+                return priority == mode
+            if mode == "today":
+                return due_value == today
+            if mode == "overdue":
+                return (not done) and bool(due_value) and due_value < today
+            return True
+
+        lines = [
+            self._format_todo_line(idx + 1, item)
+            for idx, item in enumerate(self.todos)
+            if predicate(item)
+        ]
+        if not lines:
+            return f"No tasks found for filter '{mode}'."
+        return "\n".join(lines)
+
+    def _format_todo_line(self, index: int, item: dict[str, object]) -> str:
+        status = "x" if bool(item.get("done", False)) else " "
+        priority = self._normalize_priority(item.get("priority", "medium")).upper()
+        due_value = self._normalize_due_date(item.get("due_date"))
+        due_suffix = f" (due: {due_value})" if due_value else ""
+        text = str(item.get("text", "")).strip()
+        return f"{index}. [{status}] [{priority}] {text}{due_suffix}"
+
+    def _stats_text(self) -> str:
+        total = len(self.todos)
+        done = sum(1 for item in self.todos if bool(item.get("done", False)))
+        open_items = total - done
+        high = sum(
+            1
+            for item in self.todos
+            if self._normalize_priority(item.get("priority", "medium")) == "high"
+        )
+        today = date.today().isoformat()
+        overdue = sum(
+            1
+            for item in self.todos
+            if (not bool(item.get("done", False)))
+            and bool(self._normalize_due_date(item.get("due_date")))
+            and str(self._normalize_due_date(item.get("due_date"))) < today
+        )
+        return (
+            "Task stats:\n"
+            f"- Total: {total}\n"
+            f"- Open: {open_items}\n"
+            f"- Done: {done}\n"
+            f"- High priority: {high}\n"
+            f"- Overdue (open): {overdue}"
+        )
+
+    def _help_text(self) -> str:
+        return (
+            "Commands:\n"
+            "- add <task> [/p:low|medium|high] [/d:YYYY-MM-DD]\n"
+            "- list [all|open|done|high|medium|low|today|overdue]\n"
+            "- done <number>\n"
+            "- undone <number>\n"
+            "- delete <number>\n"
+            "- priority <number> <low|medium|high>\n"
+            "- due <number> <YYYY-MM-DD|none>\n"
+            "- search <text>\n"
+            "- clear done\n"
+            "- clear all\n"
+            "- stats\n\n"
+            "Product queries:\n"
+            "- suggest laptop under 800\n"
+            "- best phone for gaming\n"
+            "- buy running shoes"
+        )
+
+    def _get_todo_by_index(self, index: int) -> Optional[dict[str, object]]:
+        if index < 1 or index > len(self.todos):
+            return None
+        return self.todos[index - 1]
+
+    def _normalize_priority(self, raw_priority: object) -> str:
+        value = str(raw_priority or "").strip().lower()
+        if value in self.PRIORITY_LEVELS:
+            return value
+        return "medium"
+
+    def _normalize_due_date(self, raw_due_date: object) -> Optional[str]:
+        value = str(raw_due_date or "").strip()
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            return None
+
+    def _normalize_language(self, raw_language: str) -> str:
+        key = raw_language.strip().lower()
+        return self.SUPPORTED_LANGUAGES.get(key, raw_language.strip() or "English")
+
+    def _get_session_history(self, session_id: str) -> list[dict[str, str]]:
+        history = self.session_memory.get(session_id, [])
+        if len(history) <= self.max_memory_messages:
+            return list(history)
+        return history[-self.max_memory_messages:]
+
+    def _remember_turn(self, session_id: str, user_text: str, assistant_text: str) -> None:
+        memory = self.session_memory.setdefault(session_id, [])
+        memory.append({"role": "user", "text": user_text})
+        memory.append({"role": "assistant", "text": assistant_text})
+        if len(memory) > self.max_memory_messages:
+            del memory[:-self.max_memory_messages]
 
     def _handle_product_request(self, message: str) -> Optional[str]:
         product_query = self._extract_product_query(message)
@@ -177,7 +406,6 @@ class TodoChatbot:
                 if candidate:
                     return candidate
 
-        # Support natural queries like: "Can you suggest a laptop under 800?"
         if any(
             keyword in lower
             for keyword in ("recommend", "suggest", "best", "buy", "purchase")
@@ -218,10 +446,19 @@ class TodoChatbot:
         for item in raw_data:
             if not isinstance(item, dict):
                 continue
+
             text = str(item.get("text", "")).strip()
             if not text:
                 continue
-            cleaned.append({"text": text, "done": bool(item.get("done", False))})
+
+            cleaned.append(
+                {
+                    "text": text,
+                    "done": bool(item.get("done", False)),
+                    "priority": self._normalize_priority(item.get("priority", "medium")),
+                    "due_date": self._normalize_due_date(item.get("due_date")),
+                }
+            )
         return cleaned
 
     def _save_todos(self) -> None:
@@ -231,27 +468,57 @@ class TodoChatbot:
                 encoding="utf-8",
             )
         except OSError:
-            # Ignore disk write errors so chat flow remains available.
             return
 
-    def _ask_openai(self, message: str) -> Optional[str]:
+    def _ask_openai(
+        self,
+        message: str,
+        history: Optional[list[dict[str, str]]] = None,
+        language: str = "English",
+    ) -> Optional[str]:
         url = "https://api.openai.com/v1/responses"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        input_items = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": (
+                            f"{self.system_prompt} "
+                            f"Reply in {language}. "
+                            "If user asks follow-up questions, use previous context."
+                        ),
+                    }
+                ],
+            }
+        ]
+
+        for item in history or []:
+            role = "assistant" if item.get("role") == "assistant" else "user"
+            text = (item.get("text") or "").strip()
+            if not text:
+                continue
+            input_items.append(
+                {
+                    "role": role,
+                    "content": [{"type": "input_text", "text": text}],
+                }
+            )
+
+        input_items.append(
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": message}],
+            }
+        )
+
         payload = {
             "model": self.model,
-            "input": [
-                {
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": self.system_prompt}],
-                },
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": message}],
-                },
-            ],
+            "input": input_items,
             "max_output_tokens": 300,
         }
 
@@ -279,7 +546,7 @@ class TodoChatbot:
         lower = message.lower().strip()
 
         if any(greeting in lower for greeting in ("hi", "hello", "hey")):
-            return "Hi! I can manage todos. Try: add buy milk"
+            return "Hi! I can manage todos. Try: add buy milk /p:high"
         if "name" in lower:
             return "I am your Todo Chatbot."
         if "how are you" in lower:
@@ -287,13 +554,13 @@ class TodoChatbot:
 
         return (
             "I can help with todos and product links. Use:\n"
-            "- add <task>\n"
-            "- list\n"
+            "- add <task> [/p:high] [/d:YYYY-MM-DD]\n"
+            "- list [open|done|today|overdue]\n"
             "- done <number>\n"
             "- undone <number>\n"
-            "- delete <number>\n"
-            "- clear done\n"
-            "- clear all\n"
+            "- priority <number> <low|medium|high>\n"
+            "- due <number> <YYYY-MM-DD|none>\n"
+            "- search <text>\n"
             "- stats\n"
             "- suggest <product>"
         )

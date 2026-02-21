@@ -237,6 +237,17 @@
         font-weight: 600;
       }
 
+      .mini-select {
+        height: 34px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #ffffff;
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.82rem;
+        padding: 0 10px;
+      }
+
       .quick-actions {
         margin-top: 10px;
         display: flex;
@@ -251,6 +262,24 @@
         border: 1px solid var(--line);
         background: #fffaf0;
         color: #2b2a28;
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+
+      .smart-replies {
+        margin-top: 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .smart-btn {
+        height: 30px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px dashed rgba(29, 127, 104, 0.5);
+        background: #ebfff8;
+        color: #145747;
         font-size: 0.8rem;
         font-weight: 600;
       }
@@ -292,10 +321,18 @@
           <div class="badge">T</div>
           <div>
             <h1>Todo Chatbot</h1>
-            <p class="hint">Try: add buy milk, stats, suggest laptop under 800</p>
+            <p class="hint">Try: add buy milk /p:high /d:2026-03-10</p>
           </div>
         </div>
         <div class="top-actions">
+          <select id="language-select" class="mini-select">
+            <option value="en-US|English">English</option>
+            <option value="hi-IN|Hindi">Hindi</option>
+            <option value="en-IN|Hinglish">Hinglish</option>
+            <option value="es-ES|Spanish">Spanish</option>
+          </select>
+          <button id="mic-btn" class="mini-btn" type="button">Mic</button>
+          <button id="voice-toggle-btn" class="mini-btn" type="button">Voice Off</button>
           <span id="mode-indicator" class="mode-pill online">Online</span>
           <button id="clear-chat-btn" class="mini-btn" type="button">Clear chat</button>
         </div>
@@ -316,7 +353,7 @@
         </form>
         <div class="quick-actions">
           <button type="button" class="quick-btn" data-prompt="help">help</button>
-          <button type="button" class="quick-btn" data-prompt="list">list</button>
+          <button type="button" class="quick-btn" data-prompt="list open">list open</button>
           <button type="button" class="quick-btn" data-prompt="stats">stats</button>
           <button
             type="button"
@@ -326,6 +363,7 @@
             suggest laptop
           </button>
         </div>
+        <div id="smart-replies" class="smart-replies"></div>
       </footer>
     </main>
 
@@ -336,13 +374,154 @@
       const sendBtnEl = document.getElementById("send-btn");
       const modeIndicatorEl = document.getElementById("mode-indicator");
       const clearChatBtnEl = document.getElementById("clear-chat-btn");
+      const languageSelectEl = document.getElementById("language-select");
+      const micBtnEl = document.getElementById("mic-btn");
+      const voiceToggleBtnEl = document.getElementById("voice-toggle-btn");
+      const smartRepliesEl = document.getElementById("smart-replies");
       const quickBtns = document.querySelectorAll(".quick-btn");
+
       const OFFLINE_TODOS_KEY = "todo_chatbot_offline_todos_v1";
+      const SESSION_KEY = "todo_chatbot_session_id_v1";
+      const LANGUAGE_KEY = "todo_chatbot_language_v1";
+      const VOICE_KEY = "todo_chatbot_voice_enabled_v1";
       const SERVER_UNREACHABLE_ERROR = "__SERVER_UNREACHABLE__";
 
+      const savedLanguage = localStorage.getItem(LANGUAGE_KEY);
+      if (savedLanguage && [...languageSelectEl.options].some((option) => option.value === savedLanguage)) {
+        languageSelectEl.value = savedLanguage;
+      }
+
       let isSending = false;
+      let isListening = false;
+      let shouldSubmitAfterListen = false;
       let offlineModeNotified = false;
+      let recognition = null;
+      let ttsEnabled = localStorage.getItem(VOICE_KEY) === "1";
+      const sessionId = getOrCreateSessionId();
       const offlineTodos = loadOfflineTodos();
+
+      function getOrCreateSessionId() {
+        const existing = localStorage.getItem(SESSION_KEY);
+        if (existing) return existing;
+        const generated =
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        localStorage.setItem(SESSION_KEY, generated);
+        return generated;
+      }
+
+      function getLanguageSetting() {
+        const [speechCode, name] = (languageSelectEl.value || "en-US|English").split("|");
+        return {
+          speechCode: speechCode || "en-US",
+          name: name || "English",
+        };
+      }
+
+      function setConnectionMode(mode) {
+        if (mode === "offline") {
+          modeIndicatorEl.textContent = "Offline";
+          modeIndicatorEl.classList.remove("online");
+          modeIndicatorEl.classList.add("offline");
+          return;
+        }
+        modeIndicatorEl.textContent = "Online";
+        modeIndicatorEl.classList.remove("offline");
+        modeIndicatorEl.classList.add("online");
+      }
+
+      function setVoiceToggleLabel() {
+        voiceToggleBtnEl.textContent = ttsEnabled ? "Voice On" : "Voice Off";
+      }
+
+      function updateMicButton() {
+        micBtnEl.textContent = isListening ? "Stop Mic" : "Mic";
+      }
+
+      function initSpeechRecognition() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          micBtnEl.disabled = true;
+          micBtnEl.textContent = "Mic N/A";
+          return;
+        }
+
+        recognition = new SpeechRecognition();
+        recognition.lang = getLanguageSetting().speechCode;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+        recognition.continuous = false;
+
+        recognition.onstart = () => {
+          isListening = true;
+          updateMicButton();
+        };
+
+        recognition.onresult = (event) => {
+          const transcript = Array.from(event.results)
+            .map((item) => item[0].transcript)
+            .join(" ")
+            .trim();
+          inputEl.value = transcript;
+        };
+
+        recognition.onerror = () => {
+          isListening = false;
+          shouldSubmitAfterListen = false;
+          updateMicButton();
+        };
+
+        recognition.onend = () => {
+          isListening = false;
+          updateMicButton();
+          if (shouldSubmitAfterListen) {
+            shouldSubmitAfterListen = false;
+            if (inputEl.value.trim() && !isSending) {
+              formEl.requestSubmit();
+            }
+          }
+        };
+      }
+
+      function speakBotText(text) {
+        if (!ttsEnabled) return;
+        if (!("speechSynthesis" in window)) return;
+
+        const spoken = text.replace(/https?:\/\/\S+/g, "").trim();
+        if (!spoken) return;
+
+        const utterance = new SpeechSynthesisUtterance(spoken);
+        const language = getLanguageSetting().speechCode;
+        utterance.lang = language;
+
+        const voices = window.speechSynthesis.getVoices();
+        const languageRoot = language.split("-")[0].toLowerCase();
+        const matchingVoice = voices.find((voice) =>
+          voice.lang.toLowerCase().startsWith(languageRoot)
+        );
+        if (matchingVoice) {
+          utterance.voice = matchingVoice;
+        }
+
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utterance);
+      }
+
+      function normalizeOfflinePriority(rawValue) {
+        const value = String(rawValue || "").trim().toLowerCase();
+        if (["low", "medium", "high"].includes(value)) return value;
+        return "medium";
+      }
+
+      function normalizeOfflineDueDate(rawValue) {
+        const value = String(rawValue || "").trim();
+        if (!value) return null;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+        const testDate = new Date(`${value}T00:00:00`);
+        if (Number.isNaN(testDate.getTime())) return null;
+        return value;
+      }
 
       function loadOfflineTodos() {
         try {
@@ -355,6 +534,8 @@
             .map((item) => ({
               text: item.text.trim(),
               done: Boolean(item.done),
+              priority: normalizeOfflinePriority(item.priority),
+              due_date: normalizeOfflineDueDate(item.due_date),
             }))
             .filter((item) => item.text.length > 0);
         } catch {
@@ -368,18 +549,6 @@
         } catch {
           // Ignore storage failures and keep chat available.
         }
-      }
-
-      function setConnectionMode(mode) {
-        if (mode === "offline") {
-          modeIndicatorEl.textContent = "Offline";
-          modeIndicatorEl.classList.remove("online");
-          modeIndicatorEl.classList.add("offline");
-          return;
-        }
-        modeIndicatorEl.textContent = "Online";
-        modeIndicatorEl.classList.remove("offline");
-        modeIndicatorEl.classList.add("online");
       }
 
       function escapeHtml(value) {
@@ -405,6 +574,7 @@
         message.className = `msg ${role}`;
         if (role === "bot") {
           message.innerHTML = formatTextWithLinks(text);
+          speakBotText(text);
         } else {
           message.textContent = text;
         }
@@ -412,14 +582,79 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
+      function buildSmartReplies(botText, lastUserText = "") {
+        const source = `${botText} ${lastUserText}`.toLowerCase();
+        if (source.includes("online links for")) {
+          return ["best budget option", "compare top 3", "suggest for students"];
+        }
+        if (source.includes("task stats")) {
+          return ["list open", "list overdue", "add follow up /p:high"];
+        }
+        if (source.includes("no tasks yet")) {
+          return ["add buy groceries /p:high", "help", "suggest laptop under 800"];
+        }
+        if (source.includes("invalid task number")) {
+          return ["list", "help", "stats"];
+        }
+        if (source.includes("commands:")) {
+          return ["add call client /p:high", "list open", "suggest headphones"];
+        }
+        return ["help", "list open", "stats"];
+      }
+
+      function renderSmartReplies(botText, lastUserText = "") {
+        const suggestions = buildSmartReplies(botText, lastUserText);
+        smartRepliesEl.innerHTML = "";
+        suggestions.forEach((text) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "smart-btn";
+          button.textContent = text;
+          button.addEventListener("click", () => {
+            if (isSending) return;
+            inputEl.value = text;
+            inputEl.focus();
+            formEl.requestSubmit();
+          });
+          smartRepliesEl.appendChild(button);
+        });
+      }
+
       function resetChat() {
         messagesEl.innerHTML = "";
-        addMessage("bot", "Ready. Use 'help' to see commands.");
+        const welcome = "Ready. Use voice, type, or tap suggestions.";
+        addMessage("bot", welcome);
+        renderSmartReplies(welcome);
       }
 
       clearChatBtnEl.addEventListener("click", () => {
         resetChat();
         inputEl.focus();
+      });
+
+      languageSelectEl.addEventListener("change", () => {
+        localStorage.setItem(LANGUAGE_KEY, languageSelectEl.value);
+        if (recognition) {
+          recognition.lang = getLanguageSetting().speechCode;
+        }
+      });
+
+      voiceToggleBtnEl.addEventListener("click", () => {
+        ttsEnabled = !ttsEnabled;
+        localStorage.setItem(VOICE_KEY, ttsEnabled ? "1" : "0");
+        setVoiceToggleLabel();
+      });
+
+      micBtnEl.addEventListener("click", () => {
+        if (!recognition) return;
+        if (isListening) {
+          shouldSubmitAfterListen = false;
+          recognition.stop();
+          return;
+        }
+        shouldSubmitAfterListen = true;
+        recognition.lang = getLanguageSetting().speechCode;
+        recognition.start();
       });
 
       quickBtns.forEach((button) => {
@@ -474,6 +709,47 @@
         ];
       }
 
+      function formatOfflineTodoLine(item, index) {
+        const priority = normalizeOfflinePriority(item.priority).toUpperCase();
+        const dueValue = normalizeOfflineDueDate(item.due_date);
+        const dueSuffix = dueValue ? ` (due: ${dueValue})` : "";
+        return `${index + 1}. [${item.done ? "x" : " "}] [${priority}] ${item.text}${dueSuffix}`;
+      }
+
+      function renderOfflineList(filterMode) {
+        if (!offlineTodos.length) {
+          return "No tasks yet. Add one with: add <task>";
+        }
+
+        const mode = (filterMode || "all").toLowerCase();
+        const today = new Date().toISOString().slice(0, 10);
+
+        const matches = offlineTodos
+          .map((item, index) => ({ item, index }))
+          .filter((entry) => {
+            const item = entry.item;
+            const done = Boolean(item.done);
+            const priority = normalizeOfflinePriority(item.priority);
+            const dueValue = normalizeOfflineDueDate(item.due_date);
+
+            if (mode === "all") return true;
+            if (mode === "open") return !done;
+            if (mode === "done") return done;
+            if (["low", "medium", "high"].includes(mode)) return priority === mode;
+            if (mode === "today") return dueValue === today;
+            if (mode === "overdue") return !done && Boolean(dueValue) && dueValue < today;
+            return true;
+          });
+
+        if (!matches.length) {
+          return `No tasks found for filter '${mode}'.`;
+        }
+
+        return matches
+          .map((entry) => formatOfflineTodoLine(entry.item, entry.index))
+          .join("\n");
+      }
+
       function getOfflineReply(message) {
         const text = message.trim();
         const lower = text.toLowerCase();
@@ -481,11 +757,14 @@
         if (lower === "help" || lower === "commands") {
           return (
             "Commands:\n" +
-            "- add <task>\n" +
-            "- list\n" +
+            "- add <task> [/p:low|medium|high] [/d:YYYY-MM-DD]\n" +
+            "- list [all|open|done|high|medium|low|today|overdue]\n" +
             "- done <number>\n" +
             "- undone <number>\n" +
             "- delete <number>\n\n" +
+            "- priority <number> <low|medium|high>\n" +
+            "- due <number> <YYYY-MM-DD|none>\n" +
+            "- search <text>\n" +
             "- clear done\n" +
             "- clear all\n" +
             "- stats\n\n" +
@@ -498,32 +777,57 @@
 
         const addMatch = text.match(/^(add|new|todo)\s+(.+)$/i);
         if (addMatch) {
-          const task = addMatch[2].trim();
-          offlineTodos.push({ text: task, done: false });
+          const rawTask = addMatch[2].trim();
+          let priority = "medium";
+          let dueDate = null;
+
+          const priorityMatch = rawTask.match(/(?:^|\s)\/p:(low|medium|high)\b/i);
+          if (priorityMatch) priority = priorityMatch[1].toLowerCase();
+
+          const dueMatch = rawTask.match(/(?:^|\s)\/d:(\d{4}-\d{2}-\d{2}|none)\b/i);
+          if (dueMatch) {
+            const rawDue = dueMatch[1].toLowerCase();
+            if (rawDue !== "none") {
+              const normalizedDue = normalizeOfflineDueDate(rawDue);
+              if (!normalizedDue) return "Invalid due date format. Use /d:YYYY-MM-DD";
+              dueDate = normalizedDue;
+            }
+          }
+
+          const cleanedTask = rawTask
+            .replace(/(?:^|\s)\/p:(low|medium|high)\b/gi, " ")
+            .replace(/(?:^|\s)\/d:(\d{4}-\d{2}-\d{2}|none)\b/gi, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+          if (!cleanedTask) {
+            return (
+              "Task text is required. Example:\n" +
+              "add buy groceries /p:high /d:2026-03-10"
+            );
+          }
+
+          offlineTodos.push({
+            text: cleanedTask,
+            done: false,
+            priority,
+            due_date: dueDate,
+          });
           saveOfflineTodos();
-          return `Added task #${offlineTodos.length}: ${task}`;
+          const extras = [`priority=${priority}`];
+          if (dueDate) extras.push(`due=${dueDate}`);
+          return `Added task #${offlineTodos.length}: ${cleanedTask} (${extras.join(", ")})`;
         }
 
-        if (
-          ["list", "tasks", "todos", "show tasks", "show todos"].includes(lower)
-        ) {
-          if (!offlineTodos.length) {
-            return "No tasks yet. Add one with: add <task>";
-          }
-          return offlineTodos
-            .map(
-              (item, index) =>
-                `${index + 1}. [${item.done ? "x" : " "}] ${item.text}`
-            )
-            .join("\n");
-        }
+        const listMatch = lower.match(
+          /^(?:list|tasks|todos|show tasks|show todos)(?:\s+(all|open|done|high|medium|low|today|overdue))?$/
+        );
+        if (listMatch) return renderOfflineList(listMatch[1] || "all");
 
         const doneMatch = lower.match(/^(done|complete|finish)\s+(\d+)$/);
         if (doneMatch) {
           const index = Number(doneMatch[2]);
-          if (index < 1 || index > offlineTodos.length) {
-            return "Invalid task number.";
-          }
+          if (index < 1 || index > offlineTodos.length) return "Invalid task number.";
           offlineTodos[index - 1].done = true;
           saveOfflineTodos();
           return `Marked task #${index} as done.`;
@@ -532,9 +836,7 @@
         const undoneMatch = lower.match(/^(undone|undo|reopen)\s+(\d+)$/);
         if (undoneMatch) {
           const index = Number(undoneMatch[2]);
-          if (index < 1 || index > offlineTodos.length) {
-            return "Invalid task number.";
-          }
+          if (index < 1 || index > offlineTodos.length) return "Invalid task number.";
           offlineTodos[index - 1].done = false;
           saveOfflineTodos();
           return `Marked task #${index} as not done.`;
@@ -543,12 +845,53 @@
         const deleteMatch = lower.match(/^(delete|remove)\s+(\d+)$/);
         if (deleteMatch) {
           const index = Number(deleteMatch[2]);
-          if (index < 1 || index > offlineTodos.length) {
-            return "Invalid task number.";
-          }
+          if (index < 1 || index > offlineTodos.length) return "Invalid task number.";
           const removed = offlineTodos.splice(index - 1, 1)[0];
           saveOfflineTodos();
           return `Deleted task #${index}: ${removed.text}`;
+        }
+
+        const priorityMatch = lower.match(
+          /^(?:priority|set priority)\s+(\d+)\s+(low|medium|high)$/
+        );
+        if (priorityMatch) {
+          const index = Number(priorityMatch[1]);
+          if (index < 1 || index > offlineTodos.length) return "Invalid task number.";
+          const value = priorityMatch[2];
+          offlineTodos[index - 1].priority = value;
+          saveOfflineTodos();
+          return `Updated priority of task #${index} to ${value}.`;
+        }
+
+        const dueMatch = lower.match(
+          /^(?:due|set due)\s+(\d+)\s+(\d{4}-\d{2}-\d{2}|none)$/
+        );
+        if (dueMatch) {
+          const index = Number(dueMatch[1]);
+          if (index < 1 || index > offlineTodos.length) return "Invalid task number.";
+          const value = dueMatch[2];
+          if (value === "none") {
+            offlineTodos[index - 1].due_date = null;
+            saveOfflineTodos();
+            return `Removed due date from task #${index}.`;
+          }
+          const normalizedDue = normalizeOfflineDueDate(value);
+          if (!normalizedDue) return "Invalid due date format. Use YYYY-MM-DD.";
+          offlineTodos[index - 1].due_date = normalizedDue;
+          saveOfflineTodos();
+          return `Updated due date of task #${index} to ${normalizedDue}.`;
+        }
+
+        const searchMatch = text.match(/^(search|find)\s+(.+)$/i);
+        if (searchMatch) {
+          const query = searchMatch[2].trim().toLowerCase();
+          if (!query) return "Please provide search text.";
+          const rows = offlineTodos
+            .map((item, index) => ({ item, index }))
+            .filter((entry) => entry.item.text.toLowerCase().includes(query))
+            .map((entry) => formatOfflineTodoLine(entry.item, entry.index));
+          if (!rows.length) return "No matching tasks found.";
+          return rows.join("\n");
         }
 
         if (["clear done", "clear completed", "remove done", "remove completed"].includes(lower)) {
@@ -571,7 +914,22 @@
           const total = offlineTodos.length;
           const done = offlineTodos.filter((item) => item.done).length;
           const open = total - done;
-          return `Task stats:\n- Total: ${total}\n- Open: ${open}\n- Done: ${done}`;
+          const high = offlineTodos.filter(
+            (item) => normalizeOfflinePriority(item.priority) === "high"
+          ).length;
+          const today = new Date().toISOString().slice(0, 10);
+          const overdue = offlineTodos.filter((item) => {
+            const dueValue = normalizeOfflineDueDate(item.due_date);
+            return !item.done && Boolean(dueValue) && dueValue < today;
+          }).length;
+          return (
+            "Task stats:\n" +
+            `- Total: ${total}\n` +
+            `- Open: ${open}\n` +
+            `- Done: ${done}\n` +
+            `- High priority: ${high}\n` +
+            `- Overdue (open): ${overdue}`
+          );
         }
 
         const productQuery = extractProductQuery(text);
@@ -583,22 +941,21 @@
         }
 
         if (["hi", "hello", "hey"].some((greeting) => lower.includes(greeting))) {
-          return "Hi! I can manage todos. Try: add buy milk";
+          return "Hi! I can manage todos. Try: add buy milk /p:high";
         }
-        if (lower.includes("name")) {
-          return "I am your Todo Chatbot.";
-        }
-        if (lower.includes("how are you")) {
-          return "Doing well. Want to add a task?";
-        }
+        if (lower.includes("name")) return "I am your Todo Chatbot.";
+        if (lower.includes("how are you")) return "Doing well. Want to add a task?";
 
         return (
           "I can help with todos and product links. Use:\n" +
-          "- add <task>\n" +
-          "- list\n" +
+          "- add <task> [/p:high] [/d:YYYY-MM-DD]\n" +
+          "- list [open|done|today|overdue]\n" +
           "- done <number>\n" +
           "- undone <number>\n" +
           "- delete <number>\n" +
+          "- priority <number> <low|medium|high>\n" +
+          "- due <number> <YYYY-MM-DD|none>\n" +
+          "- search <text>\n" +
           "- clear done\n" +
           "- clear all\n" +
           "- stats\n" +
@@ -639,17 +996,24 @@
         return { payload: {}, plainText: rawText.trim() };
       }
 
-      async function sendToEndpoint(endpoint, message) {
-        const getResponse = await fetch(
-          `${endpoint}?message=${encodeURIComponent(message)}`
-        );
+      async function sendToEndpoint(endpoint, message, activeSessionId, languageName) {
+        const query = new URLSearchParams({
+          message,
+          session_id: activeSessionId,
+          language: languageName,
+        });
+        const getResponse = await fetch(`${endpoint}?${query.toString()}`);
 
         let response = getResponse;
         if (getResponse.status === 405) {
           response = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message }),
+            body: JSON.stringify({
+              message,
+              session_id: activeSessionId,
+              language: languageName,
+            }),
           });
         }
 
@@ -667,6 +1031,7 @@
 
       async function sendMessage(message) {
         const endpoints = buildApiEndpoints();
+        const languageName = getLanguageSetting().name;
         let lastError = null;
         let sawUnreachableServer = false;
 
@@ -674,7 +1039,9 @@
           try {
             const { response, payload, plainText } = await sendToEndpoint(
               endpoint,
-              message
+              message,
+              sessionId,
+              languageName
             );
 
             if (response.ok && typeof payload.reply === "string") {
@@ -696,9 +1063,7 @@
 
             throw new Error(errorText);
           } catch (error) {
-            lastError =
-              error instanceof Error ? error : new Error(String(error));
-
+            lastError = error instanceof Error ? error : new Error(String(error));
             const text = lastError.message.toLowerCase();
             if (
               text.includes("failed to fetch") ||
@@ -739,6 +1104,7 @@
           setConnectionMode("online");
           offlineModeNotified = false;
           addMessage("bot", reply);
+          renderSmartReplies(reply, message);
         } catch (error) {
           if (error instanceof Error && error.message === SERVER_UNREACHABLE_ERROR) {
             setConnectionMode("offline");
@@ -750,7 +1116,9 @@
               );
               offlineModeNotified = true;
             }
-            addMessage("bot", getOfflineReply(message));
+            const offlineReply = getOfflineReply(message);
+            addMessage("bot", offlineReply);
+            renderSmartReplies(offlineReply, message);
           } else {
             const text = error instanceof Error ? error.message : String(error);
             addMessage("bot", `Error: ${text}`);
@@ -765,6 +1133,9 @@
       });
 
       setConnectionMode("online");
+      setVoiceToggleLabel();
+      initSpeechRecognition();
+      updateMicButton();
       resetChat();
     </script>
   </body>

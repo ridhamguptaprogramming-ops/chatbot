@@ -1,6 +1,6 @@
 import os
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request # type: ignore
 
 from chatbot import TodoChatbot
 
@@ -29,15 +29,19 @@ def chat():
 
     if request.method == "GET":
         message = request.args.get("message", "").strip()
+        session_id = str(request.args.get("session_id", "default")).strip() or "default"
+        language = str(request.args.get("language", "English")).strip() or "English"
     else:
         data = request.get_json(silent=True) or {}
         message = str(data.get("message", "")).strip()
+        session_id = str(data.get("session_id", "default")).strip() or "default"
+        language = str(data.get("language", "English")).strip() or "English"
 
     if not message:
         return jsonify({"error": "Message is required."}), 400
 
-    reply = bot.reply(message)
-    return jsonify({"reply": reply})
+    reply = bot.reply(message, session_id=session_id, language=language)
+    return jsonify({"reply": reply, "session_id": session_id, "language": language})
 
 
 if __name__ == "__main__":
