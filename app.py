@@ -9,15 +9,29 @@ app = Flask(__name__)
 bot = TodoChatbot()
 
 
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
 @app.get("/")
 def home() -> str:
     return render_template("index.html")
 
 
-@app.post("/api/chat")
+@app.route("/api/chat", methods=["GET", "POST", "OPTIONS"])
 def chat():
-    data = request.get_json(silent=True) or {}
-    message = data.get("message", "").strip()
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
+
+    if request.method == "GET":
+        message = request.args.get("message", "").strip()
+    else:
+        data = request.get_json(silent=True) or {}
+        message = str(data.get("message", "")).strip()
 
     if not message:
         return jsonify({"error": "Message is required."}), 400

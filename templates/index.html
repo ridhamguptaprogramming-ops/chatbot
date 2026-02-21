@@ -240,11 +240,12 @@
         <form id="chat-form" class="row">
           <input
             id="chat-input"
+            type="text"
             placeholder="Type a message..."
             autocomplete="off"
             required
           />
-          <button type="submit">Send</button>
+          <button id="send-btn" type="submit">Send</button>
         </form>
       </footer>
     </main>
@@ -253,6 +254,10 @@
       const messagesEl = document.getElementById("messages");
       const formEl = document.getElementById("chat-form");
       const inputEl = document.getElementById("chat-input");
+      const sendBtnEl = document.getElementById("send-btn");
+      let isSending = false;
+      let offlineModeNotified = false;
+      const offlineTodos = [];
 
       function addMessage(role, text) {
         const message = document.createElement("div");
@@ -262,24 +267,205 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
-      async function sendMessage(message) {
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message }),
-        });
+      function getOfflineReply(message) {
+        const text = message.trim();
+        const lower = text.toLowerCase();
 
-        const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload.error || "Request failed");
+        if (lower === "help" || lower === "commands") {
+          return (
+            "Commands:\n" +
+            "- add <task>\n" +
+            "- list\n" +
+            "- done <number>\n" +
+            "- delete <number>"
+          );
         }
-        return payload.reply;
+
+        const addMatch = text.match(/^(add|new|todo)\s+(.+)$/i);
+        if (addMatch) {
+          const task = addMatch[2].trim();
+          offlineTodos.push({ text: task, done: false });
+          return `Added task #${offlineTodos.length}: ${task}`;
+        }
+
+        if (
+          ["list", "tasks", "todos", "show tasks", "show todos"].includes(lower)
+        ) {
+          if (!offlineTodos.length) {
+            return "No tasks yet. Add one with: add <task>";
+          }
+          return offlineTodos
+            .map(
+              (item, index) =>
+                `${index + 1}. [${item.done ? "x" : " "}] ${item.text}`
+            )
+            .join("\n");
+        }
+
+        const doneMatch = lower.match(/^(done|complete|finish)\s+(\d+)$/);
+        if (doneMatch) {
+          const index = Number(doneMatch[2]);
+          if (index < 1 || index > offlineTodos.length) {
+            return "Invalid task number.";
+          }
+          offlineTodos[index - 1].done = true;
+          return `Marked task #${index} as done.`;
+        }
+
+        const deleteMatch = lower.match(/^(delete|remove)\s+(\d+)$/);
+        if (deleteMatch) {
+          const index = Number(deleteMatch[2]);
+          if (index < 1 || index > offlineTodos.length) {
+            return "Invalid task number.";
+          }
+          const removed = offlineTodos.splice(index - 1, 1)[0];
+          return `Deleted task #${index}: ${removed.text}`;
+        }
+
+        if (["hi", "hello", "hey"].some((greeting) => lower.includes(greeting))) {
+          return "Hi! I can manage todos. Try: add buy milk";
+        }
+        if (lower.includes("name")) {
+          return "I am your Todo Chatbot.";
+        }
+        if (lower.includes("how are you")) {
+          return "Doing well. Want to add a task?";
+        }
+
+        return (
+          "I can help with todos right now. Use:\n" +
+          "- add <task>\n" +
+          "- list\n" +
+          "- done <number>\n" +
+          "- delete <number>"
+        );
+      }
+
+      function buildApiEndpoints() {
+        const endpoints = ["/api/chat"];
+        const protocol = window.location.protocol;
+        const host = window.location.hostname || "";
+
+        if (
+          protocol === "http:" &&
+          (host === "127.0.0.1" || host === "localhost")
+        ) {
+          endpoints.push(`http://${host}:5000/api/chat`);
+        }
+
+        if (protocol !== "https:") {
+          endpoints.push("http://127.0.0.1:5000/api/chat");
+          endpoints.push("http://localhost:5000/api/chat");
+        }
+
+        return Array.from(new Set(endpoints));
+      }
+
+      async function sendToEndpoint(endpoint, message) {
+        const parseResponse = async (response) => {
+          const contentType = response.headers.get("content-type") || "";
+          let payload = {};
+          let plainText = "";
+
+          if (contentType.includes("application/json")) {
+            payload = await response.json();
+          } else {
+            plainText = (await response.text()).trim();
+          }
+
+          return { payload, plainText };
+        };
+
+        const getResponse = await fetch(
+          `${endpoint}?message=${encodeURIComponent(message)}`
+        );
+
+        let response = getResponse;
+        if (getResponse.status === 405) {
+          response = await fetch(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message }),
+          });
+        }
+
+        const parsed = await parseResponse(response);
+        return { response, ...parsed };
+      }
+
+      function looksLikeMissingApi(errorText) {
+        const text = (errorText || "").toLowerCase();
+        return (
+          text.includes("cannot get /api/chat") ||
+          text.includes("cannot post /api/chat")
+        );
+      }
+
+      async function sendMessage(message) {
+        const endpoints = buildApiEndpoints();
+
+        let lastError = null;
+        let sawUnreachableServer = false;
+
+        for (const endpoint of endpoints) {
+          try {
+            const { response, payload, plainText } = await sendToEndpoint(
+              endpoint,
+              message
+            );
+
+            if (response.ok && payload.reply) {
+              return payload.reply;
+            }
+
+            const errorText =
+              payload.error || plainText || `Request failed (${response.status})`;
+
+            if (
+              response.status === 404 ||
+              response.status === 405 ||
+              looksLikeMissingApi(errorText)
+            ) {
+              lastError = new Error(errorText);
+              sawUnreachableServer = true;
+              continue;
+            }
+
+            throw new Error(errorText);
+          } catch (error) {
+            lastError =
+              error instanceof Error ? error : new Error(String(error));
+
+            if (
+              lastError.message.toLowerCase().includes("failed to fetch") ||
+              lastError.message.toLowerCase().includes("networkerror")
+            ) {
+              sawUnreachableServer = true;
+            }
+          }
+        }
+
+        if (sawUnreachableServer) {
+          throw new Error("__SERVER_UNREACHABLE__");
+        }
+
+        if (lastError) {
+          throw lastError;
+        }
+        throw new Error("__SERVER_UNREACHABLE__");
       }
 
       formEl.addEventListener("submit", async (event) => {
         event.preventDefault();
+        if (isSending) return;
+
         const message = inputEl.value.trim();
         if (!message) return;
+
+        isSending = true;
+        inputEl.disabled = true;
+        sendBtnEl.disabled = true;
+        sendBtnEl.textContent = "Sending...";
 
         inputEl.value = "";
         addMessage("user", message);
@@ -288,7 +474,27 @@
           const reply = await sendMessage(message);
           addMessage("bot", reply);
         } catch (error) {
-          addMessage("bot", `Error: ${error.message}`);
+          if (error instanceof Error && error.message === "__SERVER_UNREACHABLE__") {
+            if (!offlineModeNotified) {
+              addMessage(
+                "bot",
+                "Server not reachable. Switched to offline mode. " +
+                  "Run python app.py and open http://127.0.0.1:5000 for full mode."
+              );
+              offlineModeNotified = true;
+            }
+            addMessage("bot", getOfflineReply(message));
+          } else {
+            const text =
+              error instanceof Error ? error.message : String(error);
+            addMessage("bot", `Error: ${text}`);
+          }
+        } finally {
+          isSending = false;
+          inputEl.disabled = false;
+          sendBtnEl.disabled = false;
+          sendBtnEl.textContent = "Send";
+          inputEl.focus();
         }
       });
 
