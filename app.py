@@ -41,7 +41,21 @@ def chat():
         return jsonify({"error": "Message is required."}), 400
 
     reply = bot.reply(message, session_id=session_id, language=language)
-    return jsonify({"reply": reply, "session_id": session_id, "language": language})
+    return jsonify(
+        {
+            "reply": reply,
+            "session_id": session_id,
+            "language": language,
+            "state": bot.get_state(),
+        }
+    )
+
+
+@app.route("/api/state", methods=["GET", "OPTIONS"])
+def state():
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True})
+    return jsonify(bot.get_state())
 
 
 if __name__ == "__main__":

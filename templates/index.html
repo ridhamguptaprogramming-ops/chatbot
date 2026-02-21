@@ -74,7 +74,7 @@
       .shell {
         position: relative;
         z-index: 1;
-        width: min(860px, 100%);
+        width: min(1120px, 100%);
         height: min(760px, 88vh);
         border: 1px solid var(--line);
         border-radius: 20px;
@@ -159,6 +159,102 @@
         overflow-y: auto;
       }
 
+      .workspace {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .dashboard {
+        border-left: 1px solid var(--line);
+        padding: 14px 14px 12px;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        background: rgba(255, 255, 255, 0.5);
+      }
+
+      .dash-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .dash-title {
+        font-size: 0.9rem;
+        font-weight: 700;
+      }
+
+      .dash-sync {
+        display: block;
+        margin-top: 2px;
+        font-size: 0.72rem;
+        opacity: 0.75;
+      }
+
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .stat-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 8px 9px;
+        background: #fffdf8;
+      }
+
+      .stat-card span {
+        display: block;
+        font-size: 0.74rem;
+        opacity: 0.8;
+      }
+
+      .stat-card strong {
+        display: block;
+        margin-top: 4px;
+        font-size: 1rem;
+      }
+
+      .dash-subtitle {
+        font-size: 0.82rem;
+        font-weight: 700;
+        margin: 0 0 8px;
+      }
+
+      .task-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        overflow-y: auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .task-item {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px;
+        background: #fffbf3;
+      }
+
+      .task-item-title {
+        font-size: 0.84rem;
+        font-weight: 600;
+      }
+
+      .task-item-meta {
+        margin-top: 4px;
+        font-size: 0.72rem;
+        opacity: 0.82;
+      }
+
       .msg {
         max-width: 78%;
         padding: 12px 14px;
@@ -186,7 +282,6 @@
       }
 
       .composer {
-        border-top: 1px solid var(--line);
         padding: 14px;
       }
 
@@ -284,6 +379,12 @@
         font-weight: 600;
       }
 
+      .typing-indicator {
+        font-size: 0.84rem;
+        opacity: 0.75;
+        font-style: italic;
+      }
+
       @keyframes rise {
         from {
           opacity: 0;
@@ -303,6 +404,16 @@
         .shell {
           height: min(760px, 95vh);
           border-radius: 16px;
+        }
+
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .dashboard {
+          border-left: none;
+          border-top: 1px solid var(--line);
+          max-height: 230px;
         }
 
         .msg {
@@ -338,7 +449,45 @@
         </div>
       </header>
 
-      <section id="messages" class="messages"></section>
+      <div class="workspace">
+        <section id="messages" class="messages"></section>
+        <aside class="dashboard">
+          <div class="dash-head">
+            <span>
+              <span class="dash-title">Live Dashboard</span>
+              <span id="dashboard-sync" class="dash-sync">Waiting for first sync...</span>
+            </span>
+            <button id="refresh-state-btn" class="mini-btn" type="button">Refresh</button>
+          </div>
+
+          <div class="stat-grid">
+            <div class="stat-card">
+              <span>Total</span>
+              <strong id="stat-total">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>Open</span>
+              <strong id="stat-open">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>Done</span>
+              <strong id="stat-done">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>Overdue</span>
+              <strong id="stat-overdue">0</strong>
+            </div>
+          </div>
+
+          <p class="dash-subtitle">Top Tasks</p>
+          <ul id="dashboard-task-list" class="task-list">
+            <li class="task-item">
+              <div class="task-item-title">No tasks yet</div>
+              <div class="task-item-meta">Add one to populate dashboard.</div>
+            </li>
+          </ul>
+        </aside>
+      </div>
 
       <footer class="composer">
         <form id="chat-form" class="row">
@@ -355,6 +504,9 @@
           <button type="button" class="quick-btn" data-prompt="help">help</button>
           <button type="button" class="quick-btn" data-prompt="list open">list open</button>
           <button type="button" class="quick-btn" data-prompt="stats">stats</button>
+          <button type="button" class="quick-btn" data-prompt="web oats nutrition">
+            web oats nutrition
+          </button>
           <button
             type="button"
             class="quick-btn"
@@ -374,20 +526,32 @@
       const sendBtnEl = document.getElementById("send-btn");
       const modeIndicatorEl = document.getElementById("mode-indicator");
       const clearChatBtnEl = document.getElementById("clear-chat-btn");
+      const refreshStateBtnEl = document.getElementById("refresh-state-btn");
       const languageSelectEl = document.getElementById("language-select");
       const micBtnEl = document.getElementById("mic-btn");
       const voiceToggleBtnEl = document.getElementById("voice-toggle-btn");
       const smartRepliesEl = document.getElementById("smart-replies");
+      const statTotalEl = document.getElementById("stat-total");
+      const statOpenEl = document.getElementById("stat-open");
+      const statDoneEl = document.getElementById("stat-done");
+      const statOverdueEl = document.getElementById("stat-overdue");
+      const dashboardTaskListEl = document.getElementById("dashboard-task-list");
+      const dashboardSyncEl = document.getElementById("dashboard-sync");
       const quickBtns = document.querySelectorAll(".quick-btn");
 
       const OFFLINE_TODOS_KEY = "todo_chatbot_offline_todos_v1";
       const SESSION_KEY = "todo_chatbot_session_id_v1";
       const LANGUAGE_KEY = "todo_chatbot_language_v1";
       const VOICE_KEY = "todo_chatbot_voice_enabled_v1";
+      const CHAT_HISTORY_KEY = "todo_chatbot_chat_history_v1";
       const SERVER_UNREACHABLE_ERROR = "__SERVER_UNREACHABLE__";
+      const DASHBOARD_POLL_MS = 7000;
 
       const savedLanguage = localStorage.getItem(LANGUAGE_KEY);
-      if (savedLanguage && [...languageSelectEl.options].some((option) => option.value === savedLanguage)) {
+      if (
+        savedLanguage &&
+        [...languageSelectEl.options].some((option) => option.value === savedLanguage)
+      ) {
         languageSelectEl.value = savedLanguage;
       }
 
@@ -396,9 +560,14 @@
       let shouldSubmitAfterListen = false;
       let offlineModeNotified = false;
       let recognition = null;
+      let typingIndicatorEl = null;
       let ttsEnabled = localStorage.getItem(VOICE_KEY) === "1";
+      let dashboardPollHandle = null;
+      let dashboardRefreshInFlight = false;
+      let stateEndpointSupported = null;
       const sessionId = getOrCreateSessionId();
       const offlineTodos = loadOfflineTodos();
+      let chatHistory = loadChatHistory();
 
       function getOrCreateSessionId() {
         const existing = localStorage.getItem(SESSION_KEY);
@@ -429,6 +598,14 @@
         modeIndicatorEl.textContent = "Online";
         modeIndicatorEl.classList.remove("offline");
         modeIndicatorEl.classList.add("online");
+      }
+
+      function setDashboardSyncLabel(text) {
+        dashboardSyncEl.textContent = text;
+      }
+
+      function formatSyncTime(dateObj) {
+        return dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       }
 
       function setVoiceToggleLabel() {
@@ -551,6 +728,34 @@
         }
       }
 
+      function loadChatHistory() {
+        try {
+          const raw = localStorage.getItem(CHAT_HISTORY_KEY);
+          if (!raw) return [];
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          return parsed
+            .filter((item) => item && (item.role === "user" || item.role === "bot"))
+            .map((item) => ({
+              role: item.role,
+              text: String(item.text || ""),
+              ts: Number(item.ts || Date.now()),
+            }))
+            .filter((item) => item.text.trim().length > 0)
+            .slice(-80);
+        } catch {
+          return [];
+        }
+      }
+
+      function saveChatHistory() {
+        try {
+          localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatHistory.slice(-80)));
+        } catch {
+          // Ignore persistence failure.
+        }
+      }
+
       function escapeHtml(value) {
         return value
           .replaceAll("&", "&amp;")
@@ -569,21 +774,48 @@
         return withLinks.replaceAll("\n", "<br>");
       }
 
-      function addMessage(role, text) {
+      function addMessage(role, text, options = {}) {
+        const persist = options.persist !== false;
+        const speak = options.speak !== false;
+
         const message = document.createElement("div");
         message.className = `msg ${role}`;
         if (role === "bot") {
           message.innerHTML = formatTextWithLinks(text);
-          speakBotText(text);
+          if (speak) speakBotText(text);
         } else {
           message.textContent = text;
         }
         messagesEl.appendChild(message);
         messagesEl.scrollTop = messagesEl.scrollHeight;
+
+        if (persist) {
+          chatHistory.push({ role, text, ts: Date.now() });
+          chatHistory = chatHistory.slice(-80);
+          saveChatHistory();
+        }
+      }
+
+      function showTypingIndicator() {
+        if (typingIndicatorEl) return;
+        typingIndicatorEl = document.createElement("div");
+        typingIndicatorEl.className = "msg bot typing-indicator";
+        typingIndicatorEl.textContent = "Typing...";
+        messagesEl.appendChild(typingIndicatorEl);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      function hideTypingIndicator() {
+        if (!typingIndicatorEl) return;
+        typingIndicatorEl.remove();
+        typingIndicatorEl = null;
       }
 
       function buildSmartReplies(botText, lastUserText = "") {
         const source = `${botText} ${lastUserText}`.toLowerCase();
+        if (source.includes("live web results for")) {
+          return ["web banana calories", "web best whey protein", "search task groceries"];
+        }
         if (source.includes("online links for")) {
           return ["best budget option", "compare top 3", "suggest for students"];
         }
@@ -620,51 +852,150 @@
         });
       }
 
-      function resetChat() {
+      function hydrateChatFromHistory() {
         messagesEl.innerHTML = "";
-        const welcome = "Ready. Use voice, type, or tap suggestions.";
-        addMessage("bot", welcome);
-        renderSmartReplies(welcome);
-      }
+        hideTypingIndicator();
 
-      clearChatBtnEl.addEventListener("click", () => {
-        resetChat();
-        inputEl.focus();
-      });
-
-      languageSelectEl.addEventListener("change", () => {
-        localStorage.setItem(LANGUAGE_KEY, languageSelectEl.value);
-        if (recognition) {
-          recognition.lang = getLanguageSetting().speechCode;
-        }
-      });
-
-      voiceToggleBtnEl.addEventListener("click", () => {
-        ttsEnabled = !ttsEnabled;
-        localStorage.setItem(VOICE_KEY, ttsEnabled ? "1" : "0");
-        setVoiceToggleLabel();
-      });
-
-      micBtnEl.addEventListener("click", () => {
-        if (!recognition) return;
-        if (isListening) {
-          shouldSubmitAfterListen = false;
-          recognition.stop();
+        if (!chatHistory.length) {
+          const welcome = "Ready. Use voice, type, or tap suggestions.";
+          addMessage("bot", welcome, { speak: false });
+          renderSmartReplies(welcome);
           return;
         }
-        shouldSubmitAfterListen = true;
-        recognition.lang = getLanguageSetting().speechCode;
-        recognition.start();
-      });
 
-      quickBtns.forEach((button) => {
-        button.addEventListener("click", () => {
-          if (isSending) return;
-          inputEl.value = button.dataset.prompt || "";
-          inputEl.focus();
-          formEl.requestSubmit();
+        for (const item of chatHistory) {
+          addMessage(item.role, item.text, { persist: false, speak: false });
+        }
+
+        const lastBot = [...chatHistory].reverse().find((item) => item.role === "bot");
+        const lastUser = [...chatHistory].reverse().find((item) => item.role === "user");
+        renderSmartReplies(lastBot ? lastBot.text : "help", lastUser ? lastUser.text : "");
+      }
+
+      function resetChat(clearHistory = false) {
+        if (clearHistory) {
+          chatHistory = [];
+          saveChatHistory();
+        }
+        hydrateChatFromHistory();
+      }
+
+      function formatOfflineTodoLine(item, index) {
+        const priority = normalizeOfflinePriority(item.priority).toUpperCase();
+        const dueValue = normalizeOfflineDueDate(item.due_date);
+        const dueSuffix = dueValue ? ` (due: ${dueValue})` : "";
+        return `${index + 1}. [${item.done ? "x" : " "}] [${priority}] ${item.text}${dueSuffix}`;
+      }
+
+      function getOfflineState() {
+        const total = offlineTodos.length;
+        const done = offlineTodos.filter((item) => item.done).length;
+        const open = total - done;
+        const overdue = offlineTodos.filter((item) => {
+          const due = normalizeOfflineDueDate(item.due_date);
+          return !item.done && due && due < new Date().toISOString().slice(0, 10);
+        }).length;
+        return {
+          tasks: offlineTodos.map((item, idx) => ({
+            id: idx + 1,
+            text: item.text,
+            done: Boolean(item.done),
+            priority: normalizeOfflinePriority(item.priority),
+            due_date: normalizeOfflineDueDate(item.due_date),
+          })),
+          stats: {
+            total,
+            open,
+            done,
+            overdue,
+            high: offlineTodos.filter(
+              (item) => normalizeOfflinePriority(item.priority) === "high"
+            ).length,
+          },
+        };
+      }
+
+      function renderDashboardFromState(state) {
+        const stats = (state && state.stats) || {};
+        const tasks = (state && Array.isArray(state.tasks) ? state.tasks : []);
+
+        statTotalEl.textContent = String(stats.total || 0);
+        statOpenEl.textContent = String(stats.open || 0);
+        statDoneEl.textContent = String(stats.done || 0);
+        statOverdueEl.textContent = String(stats.overdue || 0);
+
+        const priorityRank = { high: 0, medium: 1, low: 2 };
+        const sorted = [...tasks]
+          .sort((a, b) => {
+            if (Boolean(a.done) !== Boolean(b.done)) return a.done ? 1 : -1;
+            const aDue = a.due_date || "9999-12-31";
+            const bDue = b.due_date || "9999-12-31";
+            if (aDue !== bDue) return aDue.localeCompare(bDue);
+            const aPriority = priorityRank[a.priority] ?? 3;
+            const bPriority = priorityRank[b.priority] ?? 3;
+            if (aPriority !== bPriority) return aPriority - bPriority;
+            return String(a.text || "").localeCompare(String(b.text || ""));
+          })
+          .slice(0, 6);
+
+        dashboardTaskListEl.innerHTML = "";
+        if (!sorted.length) {
+          dashboardTaskListEl.innerHTML =
+            '<li class="task-item"><div class="task-item-title">No tasks yet</div><div class="task-item-meta">Add one to populate dashboard.</div></li>';
+          return;
+        }
+
+        sorted.forEach((task) => {
+          const item = document.createElement("li");
+          item.className = "task-item";
+          const status = task.done ? "Done" : "Open";
+          const due = task.due_date ? ` | due ${task.due_date}` : "";
+          item.innerHTML = `
+            <div class="task-item-title">#${task.id} ${escapeHtml(task.text || "")}</div>
+            <div class="task-item-meta">${status} | ${String(task.priority || "medium").toUpperCase()}${due}</div>
+          `;
+          dashboardTaskListEl.appendChild(item);
         });
-      });
+      }
+
+      function normalizeOfflinePriorityFilter(rawValue) {
+        const value = String(rawValue || "").toLowerCase();
+        return ["low", "medium", "high"].includes(value) ? value : "medium";
+      }
+
+      function renderOfflineList(filterMode) {
+        if (!offlineTodos.length) {
+          return "No tasks yet. Add one with: add <task>";
+        }
+
+        const mode = (filterMode || "all").toLowerCase();
+        const today = new Date().toISOString().slice(0, 10);
+
+        const matches = offlineTodos
+          .map((item, index) => ({ item, index }))
+          .filter((entry) => {
+            const item = entry.item;
+            const done = Boolean(item.done);
+            const priority = normalizeOfflinePriorityFilter(item.priority);
+            const dueValue = normalizeOfflineDueDate(item.due_date);
+
+            if (mode === "all") return true;
+            if (mode === "open") return !done;
+            if (mode === "done") return done;
+            if (["low", "medium", "high"].includes(mode)) return priority === mode;
+            if (mode === "today") return dueValue === today;
+            if (mode === "overdue") return !done && Boolean(dueValue) && dueValue < today;
+            return true;
+          });
+
+        if (!matches.length) {
+          return `No tasks found for filter '${mode}'.`;
+        }
+
+        return matches
+          .map((entry) => formatOfflineTodoLine(entry.item, entry.index))
+          .join("\n");
+      }
 
       function extractProductQuery(text) {
         const trimmed = text.trim();
@@ -695,7 +1026,6 @@
             .trim()
             .replace(/[.?!]+$/, "");
         }
-
         return null;
       }
 
@@ -707,47 +1037,6 @@
           `Best Buy: https://www.bestbuy.com/site/searchpage.jsp?st=${encoded}`,
           `Target: https://www.target.com/s?searchTerm=${encoded}`,
         ];
-      }
-
-      function formatOfflineTodoLine(item, index) {
-        const priority = normalizeOfflinePriority(item.priority).toUpperCase();
-        const dueValue = normalizeOfflineDueDate(item.due_date);
-        const dueSuffix = dueValue ? ` (due: ${dueValue})` : "";
-        return `${index + 1}. [${item.done ? "x" : " "}] [${priority}] ${item.text}${dueSuffix}`;
-      }
-
-      function renderOfflineList(filterMode) {
-        if (!offlineTodos.length) {
-          return "No tasks yet. Add one with: add <task>";
-        }
-
-        const mode = (filterMode || "all").toLowerCase();
-        const today = new Date().toISOString().slice(0, 10);
-
-        const matches = offlineTodos
-          .map((item, index) => ({ item, index }))
-          .filter((entry) => {
-            const item = entry.item;
-            const done = Boolean(item.done);
-            const priority = normalizeOfflinePriority(item.priority);
-            const dueValue = normalizeOfflineDueDate(item.due_date);
-
-            if (mode === "all") return true;
-            if (mode === "open") return !done;
-            if (mode === "done") return done;
-            if (["low", "medium", "high"].includes(mode)) return priority === mode;
-            if (mode === "today") return dueValue === today;
-            if (mode === "overdue") return !done && Boolean(dueValue) && dueValue < today;
-            return true;
-          });
-
-        if (!matches.length) {
-          return `No tasks found for filter '${mode}'.`;
-        }
-
-        return matches
-          .map((entry) => formatOfflineTodoLine(entry.item, entry.index))
-          .join("\n");
       }
 
       function getOfflineReply(message) {
@@ -764,10 +1053,14 @@
             "- delete <number>\n\n" +
             "- priority <number> <low|medium|high>\n" +
             "- due <number> <YYYY-MM-DD|none>\n" +
-            "- search <text>\n" +
+            "- search <text> (todo first, then web)\n" +
+            "- search task <text>\n" +
             "- clear done\n" +
             "- clear all\n" +
             "- stats\n\n" +
+            "Web:\n" +
+            "- web <query>\n" +
+            "- google <query>\n\n" +
             "Product queries:\n" +
             "- suggest laptop under 800\n" +
             "- best phone for gaming\n" +
@@ -894,6 +1187,18 @@
           return rows.join("\n");
         }
 
+        const webMatch = text.match(
+          /^(web|google|search web|search online|find online|look up|lookup)\s+(.+)$/i
+        );
+        if (webMatch) {
+          const query = webMatch[2].trim();
+          if (!query) return "Please provide a web query.";
+          return (
+            "Live web search needs server mode.\n" +
+            `Google: https://www.google.com/search?q=${encodeURIComponent(query)}`
+          );
+        }
+
         if (["clear done", "clear completed", "remove done", "remove completed"].includes(lower)) {
           const before = offlineTodos.length;
           const remaining = offlineTodos.filter((item) => !item.done);
@@ -947,7 +1252,7 @@
         if (lower.includes("how are you")) return "Doing well. Want to add a task?";
 
         return (
-          "I can help with todos and product links. Use:\n" +
+          "I can help with todos, product links, and web search. Use:\n" +
           "- add <task> [/p:high] [/d:YYYY-MM-DD]\n" +
           "- list [open|done|today|overdue]\n" +
           "- done <number>\n" +
@@ -956,10 +1261,12 @@
           "- priority <number> <low|medium|high>\n" +
           "- due <number> <YYYY-MM-DD|none>\n" +
           "- search <text>\n" +
+          "- search task <text>\n" +
           "- clear done\n" +
           "- clear all\n" +
           "- stats\n" +
-          "- suggest <product>"
+          "- suggest <product>\n" +
+          "- web <query>"
         );
       }
 
@@ -981,6 +1288,88 @@
         }
 
         return Array.from(new Set(endpoints));
+      }
+
+      function getStateEndpoint(chatEndpoint) {
+        return chatEndpoint.replace("/api/chat", "/api/state");
+      }
+
+      function parseTasksFromListReply(replyText) {
+        const text = String(replyText || "").trim();
+        if (!text || text.toLowerCase().includes("no tasks yet")) {
+          return [];
+        }
+
+        const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+        const tasks = [];
+
+        for (const line of lines) {
+          const advanced = line.match(
+            /^(\d+)\.\s+\[(x| )\]\s+\[(LOW|MEDIUM|HIGH)\]\s+(.+?)(?:\s+\(due:\s+(\d{4}-\d{2}-\d{2})\))?$/i
+          );
+          if (advanced) {
+            tasks.push({
+              id: Number(advanced[1]),
+              done: advanced[2].toLowerCase() === "x",
+              priority: advanced[3].toLowerCase(),
+              text: advanced[4].trim(),
+              due_date: advanced[5] || null,
+            });
+            continue;
+          }
+
+          const basic = line.match(/^(\d+)\.\s+\[(x| )\]\s+(.+)$/i);
+          if (basic) {
+            tasks.push({
+              id: Number(basic[1]),
+              done: basic[2].toLowerCase() === "x",
+              priority: "medium",
+              text: basic[3].trim(),
+              due_date: null,
+            });
+          }
+        }
+
+        return tasks;
+      }
+
+      function parseStatsFromReply(replyText) {
+        const text = String(replyText || "");
+        const total = text.match(/- Total:\s*(\d+)/i);
+        const open = text.match(/- Open:\s*(\d+)/i);
+        const done = text.match(/- Done:\s*(\d+)/i);
+        const high = text.match(/- High priority:\s*(\d+)/i);
+        const overdue = text.match(/- Overdue \(open\):\s*(\d+)/i);
+
+        if (!total && !open && !done) {
+          return null;
+        }
+
+        return {
+          total: Number(total?.[1] || 0),
+          open: Number(open?.[1] || 0),
+          done: Number(done?.[1] || 0),
+          high: Number(high?.[1] || 0),
+          overdue: Number(overdue?.[1] || 0),
+        };
+      }
+
+      function buildStateFromFallbackReplies(listReply, statsReply) {
+        const tasks = parseTasksFromListReply(listReply);
+        const stats =
+          parseStatsFromReply(statsReply) ||
+          {
+            total: tasks.length,
+            open: tasks.filter((task) => !task.done).length,
+            done: tasks.filter((task) => task.done).length,
+            high: tasks.filter((task) => task.priority === "high").length,
+            overdue: tasks.filter((task) => {
+              const due = task.due_date;
+              return !task.done && due && due < new Date().toISOString().slice(0, 10);
+            }).length,
+          };
+
+        return { tasks, stats };
       }
 
       async function parseResponse(response) {
@@ -1029,6 +1418,60 @@
         );
       }
 
+      async function fetchStateFromServer() {
+        const endpoints = buildApiEndpoints();
+        for (const endpoint of endpoints) {
+          try {
+            const stateEndpoint = getStateEndpoint(endpoint);
+            const response = await fetch(stateEndpoint);
+            const { payload } = await parseResponse(response);
+            if (response.ok && payload && payload.stats) {
+              return payload;
+            }
+          } catch {
+            // Try next endpoint.
+          }
+        }
+        throw new Error(SERVER_UNREACHABLE_ERROR);
+      }
+
+      async function fetchStateViaChatFallback() {
+        const endpoints = buildApiEndpoints();
+        const languageName = getLanguageSetting().name;
+
+        for (const endpoint of endpoints) {
+          try {
+            const listResult = await sendToEndpoint(
+              endpoint,
+              "list all",
+              sessionId,
+              languageName
+            );
+            if (!listResult.response.ok) {
+              continue;
+            }
+
+            const statsResult = await sendToEndpoint(
+              endpoint,
+              "stats",
+              sessionId,
+              languageName
+            );
+            if (!statsResult.response.ok) {
+              continue;
+            }
+
+            const listReply = listResult.payload.reply || listResult.plainText || "";
+            const statsReply = statsResult.payload.reply || statsResult.plainText || "";
+            return buildStateFromFallbackReplies(listReply, statsReply);
+          } catch {
+            // Try next endpoint.
+          }
+        }
+
+        throw new Error(SERVER_UNREACHABLE_ERROR);
+      }
+
       async function sendMessage(message) {
         const endpoints = buildApiEndpoints();
         const languageName = getLanguageSetting().name;
@@ -1045,7 +1488,10 @@
             );
 
             if (response.ok && typeof payload.reply === "string") {
-              return payload.reply;
+              return {
+                reply: payload.reply,
+                state: payload.state || null,
+              };
             }
 
             const errorText =
@@ -1084,6 +1530,110 @@
         throw new Error(SERVER_UNREACHABLE_ERROR);
       }
 
+      async function refreshDashboard(onlineOnly = false) {
+        if (dashboardRefreshInFlight) {
+          return null;
+        }
+        dashboardRefreshInFlight = true;
+
+        try {
+          const state = await fetchStateFromServer();
+          stateEndpointSupported = true;
+          setConnectionMode("online");
+          renderDashboardFromState(state);
+          setDashboardSyncLabel(`Synced at ${formatSyncTime(new Date())}`);
+          return state;
+        } catch (stateError) {
+          try {
+            const fallbackState = await fetchStateViaChatFallback();
+            stateEndpointSupported = false;
+            setConnectionMode("online");
+            renderDashboardFromState(fallbackState);
+            setDashboardSyncLabel(`Synced via fallback at ${formatSyncTime(new Date())}`);
+            return fallbackState;
+          } catch (fallbackError) {
+            if (!onlineOnly) {
+              renderDashboardFromState(getOfflineState());
+              setDashboardSyncLabel("Offline data");
+            }
+            throw fallbackError;
+          }
+        } finally {
+          dashboardRefreshInFlight = false;
+        }
+      }
+
+      async function pollDashboard() {
+        if (isSending || document.hidden) return;
+        if (stateEndpointSupported === false) return;
+        try {
+          const state = await fetchStateFromServer();
+          stateEndpointSupported = true;
+          setConnectionMode("online");
+          renderDashboardFromState(state);
+          setDashboardSyncLabel(`Synced at ${formatSyncTime(new Date())}`);
+        } catch {
+          if (stateEndpointSupported === false) return;
+          setConnectionMode("offline");
+          setDashboardSyncLabel("Server unreachable");
+        }
+      }
+
+      function startDashboardPolling() {
+        if (dashboardPollHandle) return;
+        dashboardPollHandle = setInterval(pollDashboard, DASHBOARD_POLL_MS);
+      }
+
+      clearChatBtnEl.addEventListener("click", () => {
+        resetChat(true);
+        inputEl.focus();
+      });
+
+      refreshStateBtnEl.addEventListener("click", async () => {
+        if (isSending) return;
+        try {
+          await refreshDashboard(true);
+        } catch {
+          setConnectionMode("offline");
+          renderDashboardFromState(getOfflineState());
+          setDashboardSyncLabel("Offline data");
+        }
+      });
+
+      languageSelectEl.addEventListener("change", () => {
+        localStorage.setItem(LANGUAGE_KEY, languageSelectEl.value);
+        if (recognition) {
+          recognition.lang = getLanguageSetting().speechCode;
+        }
+      });
+
+      voiceToggleBtnEl.addEventListener("click", () => {
+        ttsEnabled = !ttsEnabled;
+        localStorage.setItem(VOICE_KEY, ttsEnabled ? "1" : "0");
+        setVoiceToggleLabel();
+      });
+
+      micBtnEl.addEventListener("click", () => {
+        if (!recognition) return;
+        if (isListening) {
+          shouldSubmitAfterListen = false;
+          recognition.stop();
+          return;
+        }
+        shouldSubmitAfterListen = true;
+        recognition.lang = getLanguageSetting().speechCode;
+        recognition.start();
+      });
+
+      quickBtns.forEach((button) => {
+        button.addEventListener("click", () => {
+          if (isSending) return;
+          inputEl.value = button.dataset.prompt || "";
+          inputEl.focus();
+          formEl.requestSubmit();
+        });
+      });
+
       formEl.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (isSending) return;
@@ -1098,27 +1648,38 @@
 
         inputEl.value = "";
         addMessage("user", message);
+        showTypingIndicator();
 
         try {
-          const reply = await sendMessage(message);
+          const result = await sendMessage(message);
           setConnectionMode("online");
           offlineModeNotified = false;
-          addMessage("bot", reply);
-          renderSmartReplies(reply, message);
+          hideTypingIndicator();
+          addMessage("bot", result.reply);
+          renderSmartReplies(result.reply, message);
+          if (result.state) {
+            renderDashboardFromState(result.state);
+            setDashboardSyncLabel(`Synced at ${formatSyncTime(new Date())}`);
+          } else {
+            await refreshDashboard(true);
+          }
         } catch (error) {
+          hideTypingIndicator();
           if (error instanceof Error && error.message === SERVER_UNREACHABLE_ERROR) {
             setConnectionMode("offline");
             if (!offlineModeNotified) {
               addMessage(
                 "bot",
                 "Server not reachable. Switched to offline mode. " +
-                  "Run python app.py and open http://127.0.0.1:5000 for full mode."
+                  "Run python3 app.py and open http://127.0.0.1:5000 for full mode."
               );
               offlineModeNotified = true;
             }
             const offlineReply = getOfflineReply(message);
             addMessage("bot", offlineReply);
             renderSmartReplies(offlineReply, message);
+            renderDashboardFromState(getOfflineState());
+            setDashboardSyncLabel("Offline data");
           } else {
             const text = error instanceof Error ? error.message : String(error);
             addMessage("bot", `Error: ${text}`);
@@ -1136,7 +1697,17 @@
       setVoiceToggleLabel();
       initSpeechRecognition();
       updateMicButton();
-      resetChat();
+      hydrateChatFromHistory();
+      startDashboardPolling();
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+          pollDashboard();
+        }
+      });
+      refreshDashboard().catch(() => {
+        setConnectionMode("offline");
+        setDashboardSyncLabel("Offline data");
+      });
     </script>
   </body>
 </html>

@@ -1,10 +1,10 @@
 import json
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 import requests
 
@@ -28,6 +28,15 @@ class TodoChatbot:
         self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
         self.max_memory_messages = int(os.getenv("CHAT_MEMORY_MESSAGES", "12"))
+        self.web_search_enabled = (
+            os.getenv("WEB_SEARCH_ENABLED", "1").strip().lower() not in {"0", "false", "no"}
+        )
+        self.web_search_timeout = float(os.getenv("WEB_SEARCH_TIMEOUT", "8"))
+        self.web_search_max_results = max(1, min(8, int(os.getenv("WEB_SEARCH_RESULTS", "4"))))
+        self.web_user_agent = os.getenv(
+            "WEB_SEARCH_USER_AGENT",
+            "TodoChatbot/1.0 (+https://127.0.0.1)",
+        )
         self.session_memory: dict[str, list[dict[str, str]]] = {}
         self.system_prompt = (
             "You are a concise, helpful assistant for a todo app. "
@@ -53,6 +62,11 @@ class TodoChatbot:
         if product_result is not None:
             self._remember_turn(session_id, message, product_result)
             return product_result
+
+        web_result = self._handle_web_search_request(message)
+        if web_result is not None:
+            self._remember_turn(session_id, message, web_result)
+            return web_result
 
         if self.api_key:
             llm_response = self._ask_openai(
@@ -148,19 +162,31 @@ class TodoChatbot:
                 return f"Removed due date from task #{idx}."
             return f"Updated due date of task #{idx} to {due_value}."
 
+        task_search_match = re.match(
+            r"^(?:search|find)\s+(?:task|todo)\s+(.+)$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if task_search_match:
+            query = task_search_match.group(1).strip().lower()
+            if not query:
+                return "Please provide search text."
+            matches = self._search_todos(query)
+            if not matches:
+                return "No matching tasks found."
+            return "\n".join(self._format_todo_line(idx, item) for idx, item in matches)
+
         search_match = re.match(r"^(?:search|find)\s+(.+)$", text, flags=re.IGNORECASE)
         if search_match:
             query = search_match.group(1).strip().lower()
             if not query:
                 return "Please provide search text."
-            matches = [
-                (idx + 1, item)
-                for idx, item in enumerate(self.todos)
-                if query in str(item.get("text", "")).lower()
-            ]
-            if not matches:
-                return "No matching tasks found."
-            return "\n".join(self._format_todo_line(idx, item) for idx, item in matches)
+            if query.startswith(("web ", "online ", "google ")):
+                return None
+            matches = self._search_todos(query)
+            if matches:
+                return "\n".join(self._format_todo_line(idx, item) for idx, item in matches)
+            return None
 
         if lower in {"clear done", "clear completed", "remove done", "remove completed"}:
             before = len(self.todos)
@@ -311,9 +337,11 @@ class TodoChatbot:
             "- priority <number> <low|medium|high>\n"
             "- due <number> <YYYY-MM-DD|none>\n"
             "- search <text>\n"
+            "- search task <text>\n"
             "- clear done\n"
             "- clear all\n"
-            "- stats\n\n"
+            "- stats\n"
+            "- web <query>\n\n"
             "Product queries:\n"
             "- suggest laptop under 800\n"
             "- best phone for gaming\n"
@@ -357,6 +385,129 @@ class TodoChatbot:
         if len(memory) > self.max_memory_messages:
             del memory[:-self.max_memory_messages]
 
+    def get_state(self) -> dict[str, object]:
+        tasks = []
+        for idx, item in enumerate(self.todos, start=1):
+            tasks.append(
+                {
+                    "id": idx,
+                    "text": str(item.get("text", "")).strip(),
+                    "done": bool(item.get("done", False)),
+                    "priority": self._normalize_priority(item.get("priority", "medium")),
+                    "due_date": self._normalize_due_date(item.get("due_date")),
+                }
+            )
+
+        total = len(tasks)
+        done = sum(1 for task in tasks if bool(task["done"]))
+        open_items = total - done
+        high = sum(1 for task in tasks if task["priority"] == "high")
+        today = date.today().isoformat()
+        overdue = sum(
+            1
+            for task in tasks
+            if (not bool(task["done"]))
+            and bool(task["due_date"])
+            and str(task["due_date"]) < today
+        )
+
+        return {
+            "tasks": tasks,
+            "stats": {
+                "total": total,
+                "open": open_items,
+                "done": done,
+                "high": high,
+                "overdue": overdue,
+            },
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+
+    def _search_todos(self, query: str) -> list[tuple[int, dict[str, object]]]:
+        return [
+            (idx + 1, item)
+            for idx, item in enumerate(self.todos)
+            if query in str(item.get("text", "")).lower()
+        ]
+
+    def _handle_web_search_request(self, message: str) -> Optional[str]:
+        query, explicit = self._extract_web_query(message)
+        if not query or not self.web_search_enabled:
+            return None
+
+        payload = self._search_web(query)
+        if payload:
+            return self._format_web_reply(query, payload)
+
+        if explicit:
+            return (
+                "I could not fetch live web results right now.\n"
+                f"Google: {self._build_google_link(query)}"
+            )
+        return None
+
+    def _extract_web_query(self, message: str) -> tuple[Optional[str], bool]:
+        text = message.strip()
+        lower = text.lower()
+        if not text:
+            return None, False
+
+        explicit_patterns = (
+            r"^(?:web|google)\s+(.+)$",
+            r"^(?:search|find)\s+(?:web|online|google)\s+(.+)$",
+            r"^(?:look\s*up|lookup)\s+(.+)$",
+            r"^search\s+for\s+(.+)$",
+        )
+        for pattern in explicit_patterns:
+            match = re.match(pattern, text, flags=re.IGNORECASE)
+            if match and match.group(1).strip():
+                return match.group(1).strip(" .?!"), True
+
+        plain_search_match = re.match(r"^(?:search|find)\s+(.+)$", text, flags=re.IGNORECASE)
+        if plain_search_match:
+            candidate = plain_search_match.group(1).strip(" .?!")
+            if candidate and not candidate.lower().startswith(("task ", "todo ")):
+                return candidate, True
+
+        if lower.startswith(
+            (
+                "add ",
+                "new ",
+                "todo ",
+                "list",
+                "tasks",
+                "todos",
+                "done ",
+                "undone ",
+                "delete ",
+                "remove ",
+                "priority ",
+                "due ",
+                "search task ",
+                "find task ",
+                "clear ",
+                "stats",
+                "summary",
+                "help",
+                "commands",
+            )
+        ):
+            return None, False
+
+        if lower.startswith(("what ", "who ", "when ", "where ", "why ", "how ")):
+            return text.rstrip(" ?"), False
+
+        if re.search(
+            r"\b(calories|nutrition|protein|carbs|fat|benefits|healthy|recipe|price|review)\b",
+            lower,
+        ):
+            return text.rstrip(" ?"), False
+
+        if lower.endswith("?") and len(lower.split()) >= 3:
+            return text.rstrip(" ?"), False
+
+        return None, False
+
     def _handle_product_request(self, message: str) -> Optional[str]:
         product_query = self._extract_product_query(message)
         if not product_query:
@@ -364,6 +515,9 @@ class TodoChatbot:
 
         links = self._build_shopping_links(product_query)
         link_text = "\n".join(f"- {store}: {url}" for store, url in links.items())
+        google_link = self._build_google_link(product_query)
+        web_payload = self._search_web(product_query) if self.web_search_enabled else None
+        web_block = self._format_web_block(web_payload)
 
         if self.api_key:
             recommendation_prompt = (
@@ -373,18 +527,26 @@ class TodoChatbot:
             )
             recommendation = self._ask_openai(recommendation_prompt)
             if recommendation:
-                return (
+                response = (
                     f"Top picks for '{product_query}':\n"
                     f"{recommendation}\n\n"
                     "Buy links:\n"
                     f"{link_text}"
                 )
+                if web_block:
+                    response += f"\n\nLive web results:\n{web_block}"
+                response += f"\n\nGoogle: {google_link}"
+                return response
 
-        return (
+        response = (
             f"Online links for '{product_query}':\n"
             f"{link_text}\n\n"
             "Share your budget and preferred brand, and I will narrow it down."
         )
+        if web_block:
+            response += f"\n\nLive web results:\n{web_block}"
+        response += f"\n\nGoogle: {google_link}"
+        return response
 
     def _extract_product_query(self, message: str) -> Optional[str]:
         text = message.strip()
@@ -429,6 +591,198 @@ class TodoChatbot:
             "Best Buy": f"https://www.bestbuy.com/site/searchpage.jsp?st={encoded}",
             "Target": f"https://www.target.com/s?searchTerm={encoded}",
         }
+
+    def _build_google_link(self, query: str) -> str:
+        return f"https://www.google.com/search?q={quote_plus(query)}"
+
+    def _search_web(self, query: str) -> Optional[dict[str, object]]:
+        payload = self._search_duckduckgo(query)
+        if payload:
+            return payload
+        return self._search_wikipedia(query)
+
+    def _search_duckduckgo(self, query: str) -> Optional[dict[str, object]]:
+        url = "https://api.duckduckgo.com/"
+        params = {
+            "q": query,
+            "format": "json",
+            "no_html": "1",
+            "skip_disambig": "1",
+            "no_redirect": "1",
+        }
+        headers = {"User-Agent": self.web_user_agent}
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=self.web_search_timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except (requests.RequestException, ValueError):
+            return None
+
+        summary = str(data.get("AbstractText") or data.get("Answer") or "").strip()
+        summary_url = str(data.get("AbstractURL") or "").strip()
+        heading = str(data.get("Heading") or "").strip()
+
+        results: list[dict[str, str]] = []
+        seen_urls: set[str] = set()
+        if summary_url:
+            seen_urls.add(summary_url)
+            results.append(
+                {
+                    "title": heading or query.title(),
+                    "url": summary_url,
+                    "snippet": summary,
+                }
+            )
+
+        for item in self._extract_related_topics(data.get("RelatedTopics", [])):
+            url_value = str(item.get("url") or "").strip()
+            text_value = str(item.get("text") or "").strip()
+            if not url_value or not text_value or url_value in seen_urls:
+                continue
+            seen_urls.add(url_value)
+            results.append(
+                {
+                    "title": text_value.split(" - ", 1)[0][:120],
+                    "url": url_value,
+                    "snippet": text_value,
+                }
+            )
+            if len(results) >= self.web_search_max_results:
+                break
+
+        if not summary and results:
+            summary = results[0].get("snippet", "")
+
+        if not summary and not results:
+            return None
+
+        return {
+            "source": "DuckDuckGo",
+            "summary": summary,
+            "results": results[: self.web_search_max_results],
+        }
+
+    def _extract_related_topics(self, topics: object) -> list[dict[str, str]]:
+        if not isinstance(topics, list):
+            return []
+
+        flattened: list[dict[str, str]] = []
+        for item in topics:
+            if not isinstance(item, dict):
+                continue
+            first_url = item.get("FirstURL")
+            text = item.get("Text")
+            if isinstance(first_url, str) and isinstance(text, str):
+                flattened.append({"url": first_url, "text": text})
+                continue
+            nested = item.get("Topics")
+            if isinstance(nested, list):
+                flattened.extend(self._extract_related_topics(nested))
+        return flattened
+
+    def _search_wikipedia(self, query: str) -> Optional[dict[str, object]]:
+        url = "https://en.wikipedia.org/w/api.php"
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "utf8": "1",
+            "format": "json",
+            "srlimit": str(self.web_search_max_results),
+        }
+        headers = {"User-Agent": self.web_user_agent}
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=self.web_search_timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except (requests.RequestException, ValueError):
+            return None
+
+        search_rows = data.get("query", {}).get("search", [])
+        if not isinstance(search_rows, list) or not search_rows:
+            return None
+
+        results: list[dict[str, str]] = []
+        for row in search_rows:
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("title") or "").strip()
+            snippet = self._strip_html(str(row.get("snippet") or ""))
+            if not title:
+                continue
+            url_value = "https://en.wikipedia.org/wiki/" + quote(title.replace(" ", "_"))
+            results.append({"title": title, "url": url_value, "snippet": snippet})
+            if len(results) >= self.web_search_max_results:
+                break
+
+        if not results:
+            return None
+
+        return {
+            "source": "Wikipedia",
+            "summary": results[0]["snippet"],
+            "results": results,
+        }
+
+    def _strip_html(self, text: str) -> str:
+        return re.sub(r"<[^>]+>", "", text).strip()
+
+    def _shorten(self, text: str, limit: int = 180) -> str:
+        value = " ".join((text or "").split())
+        if len(value) <= limit:
+            return value
+        return value[: limit - 1].rstrip() + "..."
+
+    def _format_web_block(self, payload: Optional[dict[str, object]]) -> str:
+        if not payload:
+            return ""
+
+        lines: list[str] = []
+        summary = self._shorten(str(payload.get("summary", "")).strip(), 220)
+        if summary:
+            lines.append(f"Summary: {summary}")
+
+        results = payload.get("results", [])
+        if isinstance(results, list):
+            for index, row in enumerate(results[: self.web_search_max_results], start=1):
+                if not isinstance(row, dict):
+                    continue
+                title = self._shorten(str(row.get("title", "")).strip(), 90) or "Result"
+                snippet = self._shorten(str(row.get("snippet", "")).strip(), 140)
+                url = str(row.get("url", "")).strip()
+                if not url:
+                    continue
+                lines.append(f"{index}. {title} - {url}")
+                if snippet:
+                    lines.append(f"   {snippet}")
+
+        if not lines:
+            return ""
+        source = str(payload.get("source", "")).strip() or "Web"
+        return f"Source: {source}\n" + "\n".join(lines)
+
+    def _format_web_reply(self, query: str, payload: dict[str, object]) -> str:
+        web_block = self._format_web_block(payload)
+        if not web_block:
+            return (
+                f"Live web lookup did not return enough data for '{query}'.\n"
+                f"Google: {self._build_google_link(query)}"
+            )
+        return (
+            f"Live web results for '{query}':\n"
+            f"{web_block}\n\n"
+            f"Google: {self._build_google_link(query)}"
+        )
 
     def _load_todos(self) -> list[dict[str, object]]:
         if not self.storage_path.exists():
@@ -553,7 +907,7 @@ class TodoChatbot:
             return "Doing well. Want to add a task?"
 
         return (
-            "I can help with todos and product links. Use:\n"
+            "I can help with todos, products, and live web search. Use:\n"
             "- add <task> [/p:high] [/d:YYYY-MM-DD]\n"
             "- list [open|done|today|overdue]\n"
             "- done <number>\n"
@@ -561,6 +915,8 @@ class TodoChatbot:
             "- priority <number> <low|medium|high>\n"
             "- due <number> <YYYY-MM-DD|none>\n"
             "- search <text>\n"
+            "- search task <text>\n"
             "- stats\n"
-            "- suggest <product>"
+            "- suggest <product>\n"
+            "- web <query>"
         )

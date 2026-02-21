@@ -8,10 +8,13 @@ It supports:
 - Natural conversation context memory (session-based, best with OpenAI key)
 - Multi-language chat mode (English, Hindi, Hinglish, Spanish)
 - Smart reply suggestions (dynamic quick-reply chips)
+- Live task dashboard (total/open/done/overdue + top tasks)
+- Persistent chat history in browser (restores after refresh)
 - Smart todo commands (`add`, `list`, `done`, `undone`, `delete`)
 - Advanced task controls (`priority`, `due`, `search`, `clear done`, `clear all`, `stats`)
 - Todo persistence on disk (`data/todos.json`) so tasks survive restarts
 - Product suggestions with online shopping links (Amazon, Walmart, Best Buy, Target)
+- Live web search in chat (DuckDuckGo + Wikipedia fallback) with Google links
 - Optional OpenAI-powered replies when `OPENAI_API_KEY` is set
 
 ## Run Locally
@@ -23,7 +26,7 @@ It supports:
    ```
 2. Install dependencies:
    ```bash
-   pip install -r requirements.txt
+   python -m pip install -r requirements.txt
    ```
 3. Set environment variables:
    ```bash
@@ -35,7 +38,7 @@ It supports:
    ```
 4. Start the server:
    ```bash
-   python app.py
+   python3 app.py
    ```
 5. Open:
    ```text
@@ -55,8 +58,11 @@ It supports:
 - `priority 1 low`
 - `due 1 2026-03-20`
 - `search groceries`
+- `search task groceries`
 - `clear done`
 - `clear all`
 - `stats`
 - `suggest laptop under 800`
 - `best phone for gaming`
+- `web oats nutrition`
+- `google best protein powder under 50`
