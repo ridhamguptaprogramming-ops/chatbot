@@ -123,6 +123,34 @@
         font-size: 0.9rem;
       }
 
+      .top-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .mode-pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 0.78rem;
+        border: 1px solid var(--line);
+        background: #f5f3ef;
+      }
+
+      .mode-pill.online {
+        background: #ddf4ec;
+        color: #0f5a49;
+        border-color: rgba(15, 90, 73, 0.25);
+      }
+
+      .mode-pill.offline {
+        background: #ffe6d7;
+        color: #8a3c17;
+        border-color: rgba(138, 60, 23, 0.25);
+      }
+
       .messages {
         padding: 18px;
         display: flex;
@@ -198,6 +226,35 @@
         filter: brightness(1.05);
       }
 
+      .mini-btn {
+        height: 34px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        background: #ffffff;
+        color: var(--ink);
+        border-radius: 10px;
+        font-size: 0.82rem;
+        font-weight: 600;
+      }
+
+      .quick-actions {
+        margin-top: 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .quick-btn {
+        height: 30px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #fffaf0;
+        color: #2b2a28;
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+
       @keyframes rise {
         from {
           opacity: 0;
@@ -235,8 +292,12 @@
           <div class="badge">T</div>
           <div>
             <h1>Todo Chatbot</h1>
-            <p class="hint">Try: add buy milk, list, done 1</p>
+            <p class="hint">Try: add buy milk, stats, suggest laptop under 800</p>
           </div>
+        </div>
+        <div class="top-actions">
+          <span id="mode-indicator" class="mode-pill online">Online</span>
+          <button id="clear-chat-btn" class="mini-btn" type="button">Clear chat</button>
         </div>
       </header>
 
@@ -253,6 +314,18 @@
           />
           <button id="send-btn" type="submit">Send</button>
         </form>
+        <div class="quick-actions">
+          <button type="button" class="quick-btn" data-prompt="help">help</button>
+          <button type="button" class="quick-btn" data-prompt="list">list</button>
+          <button type="button" class="quick-btn" data-prompt="stats">stats</button>
+          <button
+            type="button"
+            class="quick-btn"
+            data-prompt="suggest laptop under 800"
+          >
+            suggest laptop
+          </button>
+        </div>
       </footer>
     </main>
 
@@ -261,9 +334,53 @@
       const formEl = document.getElementById("chat-form");
       const inputEl = document.getElementById("chat-input");
       const sendBtnEl = document.getElementById("send-btn");
+      const modeIndicatorEl = document.getElementById("mode-indicator");
+      const clearChatBtnEl = document.getElementById("clear-chat-btn");
+      const quickBtns = document.querySelectorAll(".quick-btn");
+      const OFFLINE_TODOS_KEY = "todo_chatbot_offline_todos_v1";
+      const SERVER_UNREACHABLE_ERROR = "__SERVER_UNREACHABLE__";
+
       let isSending = false;
       let offlineModeNotified = false;
-      const offlineTodos = [];
+      const offlineTodos = loadOfflineTodos();
+
+      function loadOfflineTodos() {
+        try {
+          const raw = localStorage.getItem(OFFLINE_TODOS_KEY);
+          if (!raw) return [];
+          const parsed = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return [];
+          return parsed
+            .filter((item) => item && typeof item.text === "string")
+            .map((item) => ({
+              text: item.text.trim(),
+              done: Boolean(item.done),
+            }))
+            .filter((item) => item.text.length > 0);
+        } catch {
+          return [];
+        }
+      }
+
+      function saveOfflineTodos() {
+        try {
+          localStorage.setItem(OFFLINE_TODOS_KEY, JSON.stringify(offlineTodos));
+        } catch {
+          // Ignore storage failures and keep chat available.
+        }
+      }
+
+      function setConnectionMode(mode) {
+        if (mode === "offline") {
+          modeIndicatorEl.textContent = "Offline";
+          modeIndicatorEl.classList.remove("online");
+          modeIndicatorEl.classList.add("offline");
+          return;
+        }
+        modeIndicatorEl.textContent = "Online";
+        modeIndicatorEl.classList.remove("offline");
+        modeIndicatorEl.classList.add("online");
+      }
 
       function escapeHtml(value) {
         return value
@@ -295,6 +412,25 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
+      function resetChat() {
+        messagesEl.innerHTML = "";
+        addMessage("bot", "Ready. Use 'help' to see commands.");
+      }
+
+      clearChatBtnEl.addEventListener("click", () => {
+        resetChat();
+        inputEl.focus();
+      });
+
+      quickBtns.forEach((button) => {
+        button.addEventListener("click", () => {
+          if (isSending) return;
+          inputEl.value = button.dataset.prompt || "";
+          inputEl.focus();
+          formEl.requestSubmit();
+        });
+      });
+
       function extractProductQuery(text) {
         const trimmed = text.trim();
         const lower = trimmed.toLowerCase();
@@ -309,10 +445,9 @@
 
         for (const pattern of patterns) {
           const match = trimmed.match(pattern);
-          if (match && match[1]) {
-            const candidate = match[1].trim().replace(/[.?!]+$/, "");
-            if (candidate) return candidate;
-          }
+          if (!match || !match[1]) continue;
+          const candidate = match[1].trim().replace(/[.?!]+$/, "");
+          if (candidate) return candidate;
         }
 
         if (
@@ -349,7 +484,11 @@
             "- add <task>\n" +
             "- list\n" +
             "- done <number>\n" +
+            "- undone <number>\n" +
             "- delete <number>\n\n" +
+            "- clear done\n" +
+            "- clear all\n" +
+            "- stats\n\n" +
             "Product queries:\n" +
             "- suggest laptop under 800\n" +
             "- best phone for gaming\n" +
@@ -361,6 +500,7 @@
         if (addMatch) {
           const task = addMatch[2].trim();
           offlineTodos.push({ text: task, done: false });
+          saveOfflineTodos();
           return `Added task #${offlineTodos.length}: ${task}`;
         }
 
@@ -385,7 +525,19 @@
             return "Invalid task number.";
           }
           offlineTodos[index - 1].done = true;
+          saveOfflineTodos();
           return `Marked task #${index} as done.`;
+        }
+
+        const undoneMatch = lower.match(/^(undone|undo|reopen)\s+(\d+)$/);
+        if (undoneMatch) {
+          const index = Number(undoneMatch[2]);
+          if (index < 1 || index > offlineTodos.length) {
+            return "Invalid task number.";
+          }
+          offlineTodos[index - 1].done = false;
+          saveOfflineTodos();
+          return `Marked task #${index} as not done.`;
         }
 
         const deleteMatch = lower.match(/^(delete|remove)\s+(\d+)$/);
@@ -395,7 +547,31 @@
             return "Invalid task number.";
           }
           const removed = offlineTodos.splice(index - 1, 1)[0];
+          saveOfflineTodos();
           return `Deleted task #${index}: ${removed.text}`;
+        }
+
+        if (["clear done", "clear completed", "remove done", "remove completed"].includes(lower)) {
+          const before = offlineTodos.length;
+          const remaining = offlineTodos.filter((item) => !item.done);
+          offlineTodos.length = 0;
+          offlineTodos.push(...remaining);
+          saveOfflineTodos();
+          return `Removed ${before - remaining.length} completed task(s).`;
+        }
+
+        if (["clear all", "reset", "delete all"].includes(lower)) {
+          const count = offlineTodos.length;
+          offlineTodos.length = 0;
+          saveOfflineTodos();
+          return `Cleared all tasks (${count}).`;
+        }
+
+        if (["stats", "summary"].includes(lower)) {
+          const total = offlineTodos.length;
+          const done = offlineTodos.filter((item) => item.done).length;
+          const open = total - done;
+          return `Task stats:\n- Total: ${total}\n- Open: ${open}\n- Done: ${done}`;
         }
 
         const productQuery = extractProductQuery(text);
@@ -421,7 +597,11 @@
           "- add <task>\n" +
           "- list\n" +
           "- done <number>\n" +
+          "- undone <number>\n" +
           "- delete <number>\n" +
+          "- clear done\n" +
+          "- clear all\n" +
+          "- stats\n" +
           "- suggest <product>"
         );
       }
@@ -446,21 +626,20 @@
         return Array.from(new Set(endpoints));
       }
 
-      async function sendToEndpoint(endpoint, message) {
-        const parseResponse = async (response) => {
-          const contentType = response.headers.get("content-type") || "";
-          let payload = {};
-          let plainText = "";
-
-          if (contentType.includes("application/json")) {
-            payload = await response.json();
-          } else {
-            plainText = (await response.text()).trim();
+      async function parseResponse(response) {
+        const contentType = response.headers.get("content-type") || "";
+        const rawText = await response.text();
+        if (contentType.includes("application/json")) {
+          try {
+            return { payload: JSON.parse(rawText || "{}"), plainText: "" };
+          } catch {
+            return { payload: {}, plainText: rawText.trim() };
           }
+        }
+        return { payload: {}, plainText: rawText.trim() };
+      }
 
-          return { payload, plainText };
-        };
-
+      async function sendToEndpoint(endpoint, message) {
         const getResponse = await fetch(
           `${endpoint}?message=${encodeURIComponent(message)}`
         );
@@ -488,7 +667,6 @@
 
       async function sendMessage(message) {
         const endpoints = buildApiEndpoints();
-
         let lastError = null;
         let sawUnreachableServer = false;
 
@@ -499,7 +677,7 @@
               message
             );
 
-            if (response.ok && payload.reply) {
+            if (response.ok && typeof payload.reply === "string") {
               return payload.reply;
             }
 
@@ -511,8 +689,8 @@
               response.status === 405 ||
               looksLikeMissingApi(errorText)
             ) {
-              lastError = new Error(errorText);
               sawUnreachableServer = true;
+              lastError = new Error(errorText);
               continue;
             }
 
@@ -521,9 +699,11 @@
             lastError =
               error instanceof Error ? error : new Error(String(error));
 
+            const text = lastError.message.toLowerCase();
             if (
-              lastError.message.toLowerCase().includes("failed to fetch") ||
-              lastError.message.toLowerCase().includes("networkerror")
+              text.includes("failed to fetch") ||
+              text.includes("networkerror") ||
+              text.includes("load failed")
             ) {
               sawUnreachableServer = true;
             }
@@ -531,13 +711,12 @@
         }
 
         if (sawUnreachableServer) {
-          throw new Error("__SERVER_UNREACHABLE__");
+          throw new Error(SERVER_UNREACHABLE_ERROR);
         }
-
         if (lastError) {
           throw lastError;
         }
-        throw new Error("__SERVER_UNREACHABLE__");
+        throw new Error(SERVER_UNREACHABLE_ERROR);
       }
 
       formEl.addEventListener("submit", async (event) => {
@@ -557,9 +736,12 @@
 
         try {
           const reply = await sendMessage(message);
+          setConnectionMode("online");
+          offlineModeNotified = false;
           addMessage("bot", reply);
         } catch (error) {
-          if (error instanceof Error && error.message === "__SERVER_UNREACHABLE__") {
+          if (error instanceof Error && error.message === SERVER_UNREACHABLE_ERROR) {
+            setConnectionMode("offline");
             if (!offlineModeNotified) {
               addMessage(
                 "bot",
@@ -570,8 +752,7 @@
             }
             addMessage("bot", getOfflineReply(message));
           } else {
-            const text =
-              error instanceof Error ? error.message : String(error);
+            const text = error instanceof Error ? error.message : String(error);
             addMessage("bot", `Error: ${text}`);
           }
         } finally {
@@ -583,7 +764,8 @@
         }
       });
 
-      addMessage("bot", "Ready. Use 'help' to see commands.");
+      setConnectionMode("online");
+      resetChat();
     </script>
   </body>
 </html>

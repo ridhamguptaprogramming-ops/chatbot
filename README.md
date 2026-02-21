@@ -4,6 +4,8 @@ A lightweight chatbot web app built with Flask.
 
 It supports:
 - Todo commands (`add`, `list`, `done`, `delete`)
+- Advanced todo commands (`undone`, `clear done`, `clear all`, `stats`)
+- Todo persistence on disk (`data/todos.json`) so tasks survive restarts
 - Product suggestions with online shopping links (Amazon, Walmart, Best Buy, Target)
 - Optional OpenAI-powered replies when `OPENAI_API_KEY` is set
 
@@ -41,6 +43,10 @@ It supports:
 - `add buy groceries`
 - `list`
 - `done 1`
+- `undone 1`
 - `delete 1`
+- `clear done`
+- `clear all`
+- `stats`
 - `suggest laptop under 800`
 - `best phone for gaming`

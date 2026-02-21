@@ -1,5 +1,7 @@
+import json
 import os
 import re
+from pathlib import Path
 from typing import Optional
 from urllib.parse import quote_plus
 
@@ -8,7 +10,9 @@ import requests
 
 class TodoChatbot:
     def __init__(self) -> None:
-        self.todos: list[dict[str, object]] = []
+        self.storage_path = Path(os.getenv("TODO_STORE_PATH", "data/todos.json"))
+        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self.todos: list[dict[str, object]] = self._load_todos()
         self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
         self.system_prompt = (
@@ -43,7 +47,11 @@ class TodoChatbot:
                 "- add <task>\n"
                 "- list\n"
                 "- done <number>\n"
+                "- undone <number>\n"
                 "- delete <number>\n\n"
+                "- clear done\n"
+                "- clear all\n"
+                "- stats\n\n"
                 "Product queries:\n"
                 "- suggest laptop under 800\n"
                 "- best phone for gaming\n"
@@ -54,6 +62,7 @@ class TodoChatbot:
         if add_match:
             task = add_match.group(2).strip()
             self.todos.append({"text": task, "done": False})
+            self._save_todos()
             return f"Added task #{len(self.todos)}: {task}"
 
         if lower in {"list", "tasks", "todos", "show tasks", "show todos"}:
@@ -72,7 +81,17 @@ class TodoChatbot:
             if idx < 1 or idx > len(self.todos):
                 return "Invalid task number."
             self.todos[idx - 1]["done"] = True
+            self._save_todos()
             return f"Marked task #{idx} as done."
+
+        undone_match = re.match(r"^(undone|undo|reopen)\s+(\d+)$", lower)
+        if undone_match:
+            idx = int(undone_match.group(2))
+            if idx < 1 or idx > len(self.todos):
+                return "Invalid task number."
+            self.todos[idx - 1]["done"] = False
+            self._save_todos()
+            return f"Marked task #{idx} as not done."
 
         delete_match = re.match(r"^(delete|remove)\s+(\d+)$", lower)
         if delete_match:
@@ -80,7 +99,32 @@ class TodoChatbot:
             if idx < 1 or idx > len(self.todos):
                 return "Invalid task number."
             removed = self.todos.pop(idx - 1)
+            self._save_todos()
             return f"Deleted task #{idx}: {removed['text']}"
+
+        if lower in {"clear done", "clear completed", "remove done", "remove completed"}:
+            before = len(self.todos)
+            self.todos = [item for item in self.todos if not bool(item["done"])]
+            removed = before - len(self.todos)
+            self._save_todos()
+            return f"Removed {removed} completed task(s)."
+
+        if lower in {"clear all", "reset", "delete all"}:
+            count = len(self.todos)
+            self.todos = []
+            self._save_todos()
+            return f"Cleared all tasks ({count})."
+
+        if lower in {"stats", "summary"}:
+            total = len(self.todos)
+            done = sum(1 for item in self.todos if bool(item["done"]))
+            open_items = total - done
+            return (
+                f"Task stats:\n"
+                f"- Total: {total}\n"
+                f"- Open: {open_items}\n"
+                f"- Done: {done}"
+            )
 
         return None
 
@@ -127,7 +171,7 @@ class TodoChatbot:
         ]
 
         for pattern in patterns:
-            match = re.match(pattern, lower, flags=re.IGNORECASE)
+            match = re.match(pattern, text, flags=re.IGNORECASE)
             if match:
                 candidate = match.group(1).strip(" .?!")
                 if candidate:
@@ -157,6 +201,38 @@ class TodoChatbot:
             "Best Buy": f"https://www.bestbuy.com/site/searchpage.jsp?st={encoded}",
             "Target": f"https://www.target.com/s?searchTerm={encoded}",
         }
+
+    def _load_todos(self) -> list[dict[str, object]]:
+        if not self.storage_path.exists():
+            return []
+
+        try:
+            raw_data = json.loads(self.storage_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+
+        if not isinstance(raw_data, list):
+            return []
+
+        cleaned: list[dict[str, object]] = []
+        for item in raw_data:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            cleaned.append({"text": text, "done": bool(item.get("done", False))})
+        return cleaned
+
+    def _save_todos(self) -> None:
+        try:
+            self.storage_path.write_text(
+                json.dumps(self.todos, ensure_ascii=True, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            # Ignore disk write errors so chat flow remains available.
+            return
 
     def _ask_openai(self, message: str) -> Optional[str]:
         url = "https://api.openai.com/v1/responses"
@@ -214,6 +290,10 @@ class TodoChatbot:
             "- add <task>\n"
             "- list\n"
             "- done <number>\n"
+            "- undone <number>\n"
             "- delete <number>\n"
+            "- clear done\n"
+            "- clear all\n"
+            "- stats\n"
             "- suggest <product>"
         )
