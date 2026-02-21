@@ -368,6 +368,107 @@
         gap: 8px;
       }
 
+      .ai-studio {
+        margin-top: 12px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.75);
+      }
+
+      .ai-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .ai-title {
+        font-size: 0.84rem;
+        font-weight: 700;
+      }
+
+      .ai-grid {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 10px;
+      }
+
+      .ai-video-wrap {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+        background: #f2efe8;
+        min-height: 140px;
+        display: grid;
+        place-items: center;
+      }
+
+      .ai-video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .ai-placeholder {
+        padding: 10px;
+        text-align: center;
+        font-size: 0.78rem;
+        opacity: 0.76;
+      }
+
+      .ai-controls {
+        display: grid;
+        gap: 8px;
+      }
+
+      .ai-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .ai-row.two {
+        grid-template-columns: 1fr auto;
+      }
+
+      .ai-mini {
+        height: 32px;
+        padding: 0 10px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        font-size: 0.78rem;
+        font-weight: 600;
+      }
+
+      .ai-input {
+        height: 34px;
+        padding: 0 10px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.8rem;
+      }
+
+      .ai-output {
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fffdf6;
+        padding: 8px;
+        font-size: 0.76rem;
+        line-height: 1.35;
+        min-height: 70px;
+        max-height: 130px;
+        overflow: auto;
+        white-space: pre-wrap;
+      }
+
       .smart-btn {
         height: 30px;
         padding: 0 12px;
@@ -414,6 +515,14 @@
           border-left: none;
           border-top: 1px solid var(--line);
           max-height: 230px;
+        }
+
+        .ai-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .ai-video-wrap {
+          min-height: 180px;
         }
 
         .msg {
@@ -516,6 +625,42 @@
           </button>
         </div>
         <div id="smart-replies" class="smart-replies"></div>
+
+        <section class="ai-studio">
+          <div class="ai-head">
+            <span class="ai-title">Advanced AI Studio (Python)</span>
+            <button id="ai-camera-btn" type="button" class="mini-btn">Start Camera</button>
+          </div>
+
+          <div class="ai-grid">
+            <div class="ai-video-wrap">
+              <video id="ai-video" class="ai-video" autoplay muted playsinline hidden></video>
+              <div id="ai-video-placeholder" class="ai-placeholder">
+                Camera off. Start camera for face, emotion, and gesture AI.
+              </div>
+              <canvas id="ai-canvas" hidden></canvas>
+            </div>
+
+            <div class="ai-controls">
+              <input id="ai-user-id" class="ai-input" value="default" placeholder="Face profile name" />
+              <div class="ai-row">
+                <button id="ai-enroll-btn" type="button" class="ai-mini">Enroll Face</button>
+                <button id="ai-verify-btn" type="button" class="ai-mini">Face Login</button>
+                <button id="ai-emotion-btn" type="button" class="ai-mini">Detect Emotion</button>
+              </div>
+              <div class="ai-row">
+                <button id="ai-gesture-btn" type="button" class="ai-mini">Gesture Cmd</button>
+                <button id="ai-screenshot-btn" type="button" class="ai-mini">Screenshot</button>
+                <button id="ai-auto-shot-btn" type="button" class="ai-mini">AutoShot Off</button>
+              </div>
+              <div class="ai-row two">
+                <input id="ai-web-query" class="ai-input" placeholder="Web automate query or URL" />
+                <button id="ai-web-btn" type="button" class="ai-mini">Run Web AI</button>
+              </div>
+              <pre id="ai-output" class="ai-output">AI studio ready.</pre>
+            </div>
+          </div>
+        </section>
       </footer>
     </main>
 
@@ -538,6 +683,20 @@
       const dashboardTaskListEl = document.getElementById("dashboard-task-list");
       const dashboardSyncEl = document.getElementById("dashboard-sync");
       const quickBtns = document.querySelectorAll(".quick-btn");
+      const aiCameraBtnEl = document.getElementById("ai-camera-btn");
+      const aiVideoEl = document.getElementById("ai-video");
+      const aiCanvasEl = document.getElementById("ai-canvas");
+      const aiVideoPlaceholderEl = document.getElementById("ai-video-placeholder");
+      const aiUserIdEl = document.getElementById("ai-user-id");
+      const aiEnrollBtnEl = document.getElementById("ai-enroll-btn");
+      const aiVerifyBtnEl = document.getElementById("ai-verify-btn");
+      const aiEmotionBtnEl = document.getElementById("ai-emotion-btn");
+      const aiGestureBtnEl = document.getElementById("ai-gesture-btn");
+      const aiScreenshotBtnEl = document.getElementById("ai-screenshot-btn");
+      const aiAutoShotBtnEl = document.getElementById("ai-auto-shot-btn");
+      const aiWebQueryEl = document.getElementById("ai-web-query");
+      const aiWebBtnEl = document.getElementById("ai-web-btn");
+      const aiOutputEl = document.getElementById("ai-output");
 
       const OFFLINE_TODOS_KEY = "todo_chatbot_offline_todos_v1";
       const SESSION_KEY = "todo_chatbot_session_id_v1";
@@ -545,6 +704,7 @@
       const VOICE_KEY = "todo_chatbot_voice_enabled_v1";
       const CHAT_HISTORY_KEY = "todo_chatbot_chat_history_v1";
       const SERVER_UNREACHABLE_ERROR = "__SERVER_UNREACHABLE__";
+      const AI_SERVER_UNREACHABLE_ERROR = "__AI_SERVER_UNREACHABLE__";
       const DASHBOARD_POLL_MS = 7000;
 
       const savedLanguage = localStorage.getItem(LANGUAGE_KEY);
@@ -565,6 +725,8 @@
       let dashboardPollHandle = null;
       let dashboardRefreshInFlight = false;
       let stateEndpointSupported = null;
+      let aiStream = null;
+      let aiAutoScreenshot = false;
       const sessionId = getOrCreateSessionId();
       const offlineTodos = loadOfflineTodos();
       let chatHistory = loadChatHistory();
@@ -606,6 +768,182 @@
 
       function formatSyncTime(dateObj) {
         return dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+      function setAiOutput(text) {
+        aiOutputEl.textContent = String(text || "").trim() || "AI studio ready.";
+      }
+
+      function setAiAutoShotLabel() {
+        aiAutoShotBtnEl.textContent = aiAutoScreenshot ? "AutoShot On" : "AutoShot Off";
+      }
+
+      function getAiEndpoints(path) {
+        return buildApiEndpoints().map((chatEndpoint) =>
+          chatEndpoint.replace("/api/chat", path)
+        );
+      }
+
+      async function callAiApi(path, payload = {}, method = "POST") {
+        const endpoints = getAiEndpoints(path);
+        let lastError = null;
+        let sawUnreachable = false;
+        for (const endpoint of endpoints) {
+          try {
+            const response = await fetch(endpoint, {
+              method,
+              headers: { "Content-Type": "application/json" },
+              body: method === "GET" ? undefined : JSON.stringify(payload),
+            });
+            const parsed = await parseResponse(response);
+            if (response.ok) {
+              return parsed.payload || {};
+            }
+            const errText =
+              parsed.payload.error ||
+              parsed.plainText ||
+              `AI request failed (${response.status})`;
+            lastError = new Error(errText);
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            const text = lastError.message.toLowerCase();
+            if (
+              text.includes("failed to fetch") ||
+              text.includes("networkerror") ||
+              text.includes("load failed")
+            ) {
+              sawUnreachable = true;
+            }
+          }
+        }
+        if (sawUnreachable) {
+          throw new Error(AI_SERVER_UNREACHABLE_ERROR);
+        }
+        if (lastError) throw lastError;
+        throw new Error("AI endpoint not reachable.");
+      }
+
+      function resolveAiErrorMessage(error) {
+        if (error instanceof Error && error.message === AI_SERVER_UNREACHABLE_ERROR) {
+          return (
+            "AI server not reachable. Run python3 app.py and open http://127.0.0.1:5000"
+          );
+        }
+        return error instanceof Error ? error.message : String(error);
+      }
+
+      async function startAiCamera() {
+        if (aiStream) return true;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setAiOutput("Camera API is not supported in this browser.");
+          return false;
+        }
+        try {
+          aiStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 360, facingMode: "user" },
+            audio: false,
+          });
+          aiVideoEl.srcObject = aiStream;
+          aiVideoEl.hidden = false;
+          aiVideoPlaceholderEl.hidden = true;
+          aiCameraBtnEl.textContent = "Stop Camera";
+          setAiOutput("Camera started. You can use face, emotion, and gesture features.");
+          return true;
+        } catch (error) {
+          const text = error instanceof Error ? error.message : String(error);
+          setAiOutput(`Failed to start camera: ${text}`);
+          return false;
+        }
+      }
+
+      function stopAiCamera() {
+        if (aiStream) {
+          aiStream.getTracks().forEach((track) => track.stop());
+          aiStream = null;
+        }
+        aiVideoEl.srcObject = null;
+        aiVideoEl.hidden = true;
+        aiVideoPlaceholderEl.hidden = false;
+        aiCameraBtnEl.textContent = "Start Camera";
+      }
+
+      async function ensureAiCameraFrame() {
+        if (!aiStream) {
+          const started = await startAiCamera();
+          if (!started) return null;
+        }
+        if (!aiVideoEl.videoWidth || !aiVideoEl.videoHeight) {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        }
+        const width = aiVideoEl.videoWidth || 640;
+        const height = aiVideoEl.videoHeight || 360;
+        aiCanvasEl.width = width;
+        aiCanvasEl.height = height;
+        const ctx = aiCanvasEl.getContext("2d");
+        if (!ctx) return null;
+        ctx.drawImage(aiVideoEl, 0, 0, width, height);
+        return aiCanvasEl.toDataURL("image/jpeg", 0.9);
+      }
+
+      function formatAiSearchPayload(payload) {
+        if (!payload || typeof payload !== "object") {
+          return "No AI web response.";
+        }
+        const lines = [];
+        if (payload.source) lines.push(`Source: ${payload.source}`);
+        if (payload.summary) lines.push(`Summary: ${payload.summary}`);
+        if (Array.isArray(payload.results) && payload.results.length) {
+          payload.results.slice(0, 4).forEach((item, index) => {
+            const title = item.title || "Result";
+            const url = item.url || "";
+            const snippet = item.snippet || "";
+            lines.push(`${index + 1}. ${title} - ${url}`);
+            if (snippet) lines.push(`   ${snippet}`);
+          });
+        }
+        if (payload.google_url) lines.push(`Google: ${payload.google_url}`);
+        return lines.join("\n");
+      }
+
+      function buildBrowserWebFallback(rawInput) {
+        const value = String(rawInput || "").trim();
+        if (!value) return "Enter a query or URL.";
+
+        const maybeUrl = /^https?:\/\//i.test(value) || (!value.includes(" ") && value.includes("."));
+        if (maybeUrl) {
+          const normalized = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+          return (
+            "AI server unreachable. Browser fallback links:\n" +
+            `- Open URL: ${normalized}\n` +
+            `- Google cached search: https://www.google.com/search?q=${encodeURIComponent(normalized)}\n\n` +
+            "Run python3 app.py for full AI web automation."
+          );
+        }
+
+        const encoded = encodeURIComponent(value);
+        return (
+          "AI server unreachable. Browser fallback links:\n" +
+          `- Google: https://www.google.com/search?q=${encoded}\n` +
+          `- DuckDuckGo: https://duckduckgo.com/?q=${encoded}\n` +
+          `- Wikipedia: https://en.wikipedia.org/w/index.php?search=${encoded}\n\n` +
+          "Run python3 app.py for full AI web automation."
+        );
+      }
+
+      function saveBrowserScreenshot(dataUrl, prefix = "browser_shot") {
+        if (!dataUrl || typeof dataUrl !== "string") return "";
+        const stamp = new Date()
+          .toISOString()
+          .replaceAll(":", "-")
+          .replaceAll(".", "-");
+        const filename = `${prefix}_${stamp}.jpg`;
+        const link = document.createElement("a");
+        link.href = dataUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        return filename;
       }
 
       function setVoiceToggleLabel() {
@@ -1634,6 +1972,170 @@
         });
       });
 
+      aiCameraBtnEl.addEventListener("click", async () => {
+        if (aiStream) {
+          stopAiCamera();
+          setAiOutput("Camera stopped.");
+          return;
+        }
+        await startAiCamera();
+      });
+
+      aiAutoShotBtnEl.addEventListener("click", () => {
+        aiAutoScreenshot = !aiAutoScreenshot;
+        setAiAutoShotLabel();
+        setAiOutput(
+          aiAutoScreenshot
+            ? "Auto screenshot enabled (triggered on large hand gesture)."
+            : "Auto screenshot disabled."
+        );
+      });
+
+      aiEnrollBtnEl.addEventListener("click", async () => {
+        const frame = await ensureAiCameraFrame();
+        if (!frame) return;
+        const userId = (aiUserIdEl.value || "").trim() || "default";
+        try {
+          const result = await callAiApi("/api/ai/enroll-face", {
+            user_id: userId,
+            image_data: frame,
+          });
+          const text = result.message || `Face profile saved for '${userId}'.`;
+          setAiOutput(text);
+          addMessage("bot", `AI: ${text}`, { speak: false });
+        } catch (error) {
+          const text = resolveAiErrorMessage(error);
+          setAiOutput(`Face enrollment failed: ${text}`);
+        }
+      });
+
+      aiVerifyBtnEl.addEventListener("click", async () => {
+        const frame = await ensureAiCameraFrame();
+        if (!frame) return;
+        const userId = (aiUserIdEl.value || "").trim() || "default";
+        try {
+          const result = await callAiApi("/api/ai/verify-face", {
+            user_id: userId,
+            image_data: frame,
+          });
+          const text = result.message || "Face verification complete.";
+          const score = typeof result.score === "number" ? ` score=${result.score}` : "";
+          const out = `${text}${score}`;
+          setAiOutput(out);
+          addMessage("bot", `AI Face Login: ${out}`, { speak: false });
+        } catch (error) {
+          const text = resolveAiErrorMessage(error);
+          setAiOutput(`Face login failed: ${text}`);
+        }
+      });
+
+      aiEmotionBtnEl.addEventListener("click", async () => {
+        const frame = await ensureAiCameraFrame();
+        const currentText = inputEl.value.trim();
+        try {
+          const result = await callAiApi("/api/ai/emotion", {
+            text: currentText,
+            image_data: frame || "",
+          });
+          const text =
+            `Emotion: ${result.emotion || "neutral"} ` +
+            `(confidence ${result.confidence || 0})` +
+            `\nHint: ${result.hint || "Keep going."}`;
+          setAiOutput(text);
+          addMessage("bot", `AI Emotion: ${text}`, { speak: false });
+        } catch (error) {
+          const text = resolveAiErrorMessage(error);
+          setAiOutput(`Emotion detection failed: ${text}`);
+        }
+      });
+
+      aiGestureBtnEl.addEventListener("click", async () => {
+        const frame = await ensureAiCameraFrame();
+        if (!frame) return;
+        try {
+          const result = await callAiApi("/api/ai/gesture", {
+            image_data: frame,
+            auto_screenshot: aiAutoScreenshot,
+          });
+          const command = String(result.command || "").trim();
+          const text =
+            `${result.message || "Gesture analyzed."}` +
+            (result.auto_screenshot ? `\nSaved: ${result.auto_screenshot}` : "");
+          setAiOutput(text);
+          if (command) {
+            inputEl.value = command;
+            inputEl.focus();
+          }
+          addMessage("bot", `AI Gesture: ${text}`, { speak: false });
+        } catch (error) {
+          const text = resolveAiErrorMessage(error);
+          setAiOutput(`Gesture detection failed: ${text}`);
+        }
+      });
+
+      aiScreenshotBtnEl.addEventListener("click", async () => {
+        const frame = await ensureAiCameraFrame();
+        if (!frame) return;
+        try {
+          const result = await callAiApi("/api/ai/screenshot", { image_data: frame });
+          const text = result.path
+            ? `Screenshot saved: ${result.path}`
+            : result.message || "Screenshot captured.";
+          setAiOutput(text);
+          addMessage("bot", `AI Screenshot: ${text}`, { speak: false });
+        } catch (error) {
+          if (error instanceof Error && error.message === AI_SERVER_UNREACHABLE_ERROR) {
+            const file = saveBrowserScreenshot(frame, "ai_browser_screenshot");
+            const text = file
+              ? `AI server unreachable. Saved local browser screenshot: ${file}`
+              : "AI server unreachable. Could not save local screenshot.";
+            setAiOutput(text);
+            addMessage("bot", `AI Screenshot (Browser Fallback): ${text}`, { speak: false });
+            return;
+          }
+          const text = resolveAiErrorMessage(error);
+          setAiOutput(`Screenshot failed: ${text}`);
+        }
+      });
+
+      aiWebBtnEl.addEventListener("click", async () => {
+        const raw = (aiWebQueryEl.value || inputEl.value || "").trim();
+        if (!raw) {
+          setAiOutput("Enter a query or URL for web automation.");
+          return;
+        }
+        const maybeUrl = /^https?:\/\//i.test(raw) || (!raw.includes(" ") && raw.includes("."));
+        const payload = maybeUrl ? { url: raw } : { query: raw };
+        try {
+          const result = await callAiApi("/api/ai/automate-web", payload);
+          let text = "";
+          if (result.mode === "search") {
+            text = formatAiSearchPayload(result);
+          } else {
+            const lines = [
+              `Title: ${result.title || "Untitled"}`,
+              result.description ? `Description: ${result.description}` : "",
+            ].filter(Boolean);
+            const links = Array.isArray(result.top_links) ? result.top_links : [];
+            links.slice(0, 4).forEach((item, index) => {
+              lines.push(`${index + 1}. ${(item.title || "link").trim()} - ${item.url || ""}`);
+            });
+            text = lines.join("\n");
+          }
+          setAiOutput(text);
+          addMessage("bot", `AI Web:\n${text}`, { speak: false });
+        } catch (error) {
+          if (error instanceof Error && error.message === AI_SERVER_UNREACHABLE_ERROR) {
+            const fallback = buildBrowserWebFallback(raw);
+            setAiOutput(fallback);
+            addMessage("bot", `AI Web (Browser Fallback):\n${fallback}`, { speak: false });
+            return;
+          }
+          const text = resolveAiErrorMessage(error);
+          setAiOutput(`Web automation failed: ${text}`);
+        }
+      });
+
       formEl.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (isSending) return;
@@ -1695,10 +2197,24 @@
 
       setConnectionMode("online");
       setVoiceToggleLabel();
+      setAiAutoShotLabel();
       initSpeechRecognition();
       updateMicButton();
       hydrateChatFromHistory();
       startDashboardPolling();
+      callAiApi("/api/ai/status", {}, "GET")
+        .then((payload) => {
+          if (!payload || payload.ok !== true) return;
+          const hasCv = payload.opencv_available ? "OpenCV ready" : "OpenCV missing";
+          const hasBs4 = payload.bs4_available ? "BS4 ready" : "BS4 missing";
+          setAiOutput(`AI status: ${hasCv}, ${hasBs4}. Face profiles: ${payload.face_profiles || 0}`);
+        })
+        .catch(() => {
+          setAiOutput("AI status unavailable. Start server for full AI mode.");
+        });
+      window.addEventListener("beforeunload", () => {
+        stopAiCamera();
+      });
       document.addEventListener("visibilitychange", () => {
         if (!document.hidden) {
           pollDashboard();

@@ -3,7 +3,7 @@ import os
 import re
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import quote, quote_plus
 
 import requests
@@ -19,6 +19,36 @@ class TodoChatbot:
         "hinglish": "Hinglish",
         "spanish": "Spanish",
         "es": "Spanish",
+    }
+    NLP_STOPWORDS = {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "to",
+        "for",
+        "with",
+        "in",
+        "on",
+        "of",
+        "is",
+        "are",
+        "am",
+        "i",
+        "you",
+        "me",
+        "my",
+        "it",
+        "this",
+        "that",
+        "please",
+        "can",
+        "could",
+        "would",
+        "should",
+        "want",
+        "need",
     }
 
     def __init__(self) -> None:
@@ -422,6 +452,252 @@ class TodoChatbot:
             },
             "generated_at": datetime.utcnow().isoformat() + "Z",
         }
+
+    def nlp_analyze(
+        self,
+        text: str,
+        session_id: str = "default",
+        language: str = "English",
+    ) -> dict[str, object]:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return {
+                "ok": False,
+                "error": "Text is required.",
+                "analysis": {},
+            }
+
+        heuristics = self._heuristic_nlp(cleaned)
+        llm_data: dict[str, Any] = {}
+        model_used = "heuristic"
+
+        if self.api_key:
+            prompt = (
+                "Analyze the user's message for NLP metadata. Return strict JSON with keys:\n"
+                "intent, sentiment, confidence, keywords, entities, summary, reply_suggestion.\n"
+                "Rules:\n"
+                "- intent: one of [todo_add, todo_list, todo_update, product_search, web_search, greeting, question, general]\n"
+                "- sentiment: one of [positive, neutral, negative]\n"
+                "- confidence: number in [0,1]\n"
+                "- keywords: array of short strings\n"
+                "- entities: object with optional keys date, priority, task_index, product, url\n"
+                "- summary: one short sentence\n"
+                "- reply_suggestion: one concise assistant reply\n"
+                f"\nUser text: {cleaned}"
+            )
+            llm_text = self._ask_openai(
+                prompt,
+                history=self._get_session_history(session_id),
+                language=language,
+            )
+            if llm_text:
+                parsed = self._extract_json_object(llm_text)
+                if parsed:
+                    llm_data = parsed
+                    model_used = self.model
+
+        merged = self._merge_nlp_analysis(heuristics, llm_data)
+        return {
+            "ok": True,
+            "input": cleaned,
+            "language": self._normalize_language(language),
+            "session_id": (session_id or "default").strip() or "default",
+            "analysis": merged,
+            "provider": "openai" if model_used != "heuristic" else "local",
+            "model": model_used,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+
+    def _merge_nlp_analysis(
+        self,
+        heuristic_data: dict[str, Any],
+        llm_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not llm_data:
+            return heuristic_data
+
+        merged = dict(heuristic_data)
+        for key in (
+            "intent",
+            "sentiment",
+            "confidence",
+            "summary",
+            "reply_suggestion",
+        ):
+            value = llm_data.get(key)
+            if isinstance(value, (str, int, float)) and str(value).strip():
+                merged[key] = value
+
+        keywords = llm_data.get("keywords")
+        if isinstance(keywords, list):
+            clean_keywords = [
+                str(item).strip()
+                for item in keywords[:10]
+                if isinstance(item, (str, int, float)) and str(item).strip()
+            ]
+            if clean_keywords:
+                merged["keywords"] = clean_keywords
+
+        entities = llm_data.get("entities")
+        if isinstance(entities, dict):
+            existing = merged.get("entities", {})
+            if not isinstance(existing, dict):
+                existing = {}
+            for entity_key, entity_value in entities.items():
+                if entity_value in (None, "", [], {}):
+                    continue
+                existing[str(entity_key)] = entity_value
+            merged["entities"] = existing
+
+        return merged
+
+    def _extract_json_object(self, raw_text: str) -> dict[str, Any]:
+        text = (raw_text or "").strip()
+        if not text:
+            return {}
+
+        try:
+            loaded = json.loads(text)
+            if isinstance(loaded, dict):
+                return loaded
+        except json.JSONDecodeError:
+            pass
+
+        match = re.search(r"\{[\s\S]*\}", text)
+        if not match:
+            return {}
+        try:
+            loaded = json.loads(match.group(0))
+            if isinstance(loaded, dict):
+                return loaded
+        except json.JSONDecodeError:
+            return {}
+        return {}
+
+    def _heuristic_nlp(self, text: str) -> dict[str, Any]:
+        lower = text.lower().strip()
+        intent = self._infer_intent(lower)
+        sentiment, confidence = self._infer_sentiment(lower)
+        entities = self._extract_entities(text)
+        keywords = self._extract_keywords(lower)
+        summary = self._build_short_summary(text, intent)
+        reply_suggestion = self._build_reply_suggestion(intent, entities)
+
+        return {
+            "intent": intent,
+            "sentiment": sentiment,
+            "confidence": confidence,
+            "keywords": keywords,
+            "entities": entities,
+            "summary": summary,
+            "reply_suggestion": reply_suggestion,
+        }
+
+    def _infer_intent(self, lower_text: str) -> str:
+        if re.match(r"^(add|new|todo)\s+", lower_text):
+            return "todo_add"
+        if re.match(r"^(list|tasks|todos|show tasks|show todos)\b", lower_text):
+            return "todo_list"
+        if re.match(
+            r"^(done|undone|delete|remove|priority|due|clear|search task|find task)\b",
+            lower_text,
+        ):
+            return "todo_update"
+        if re.match(r"^(web|google|search web|search online|find online|look up|lookup)\s+", lower_text):
+            return "web_search"
+        if re.search(r"\b(suggest|recommend|best|buy|purchase|order)\b", lower_text):
+            return "product_search"
+        if any(greet in lower_text for greet in ("hi", "hello", "hey")):
+            return "greeting"
+        if "?" in lower_text or re.match(r"^(what|who|when|where|why|how)\b", lower_text):
+            return "question"
+        return "general"
+
+    def _infer_sentiment(self, lower_text: str) -> tuple[str, float]:
+        positive = {"good", "great", "awesome", "happy", "love", "amazing", "nice", "perfect"}
+        negative = {"bad", "sad", "angry", "upset", "hate", "terrible", "worst", "stressed"}
+        tokens = re.findall(r"[a-z']+", lower_text)
+
+        pos_score = sum(1 for token in tokens if token in positive)
+        neg_score = sum(1 for token in tokens if token in negative)
+
+        if pos_score > neg_score:
+            return "positive", min(0.95, 0.55 + 0.1 * (pos_score - neg_score))
+        if neg_score > pos_score:
+            return "negative", min(0.95, 0.55 + 0.1 * (neg_score - pos_score))
+        return "neutral", 0.58
+
+    def _extract_entities(self, text: str) -> dict[str, Any]:
+        lower = text.lower()
+        entities: dict[str, Any] = {}
+
+        date_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", text)
+        if date_match:
+            entities["date"] = date_match.group(1)
+
+        priority_match = re.search(r"\b(low|medium|high)\b", lower)
+        if priority_match:
+            entities["priority"] = priority_match.group(1)
+
+        task_match = re.search(
+            r"(?:\b(?:task|todo|item)\s*#?\s*(\d+)\b)|"
+            r"(?:\b(?:done|undone|delete|remove|priority|due)\s+(\d+)\b)|"
+            r"(?:#(\d+)\b)",
+            lower,
+        )
+        if task_match:
+            index_text = next((group for group in task_match.groups() if group), "")
+            if index_text:
+                entities["task_index"] = int(index_text)
+
+        url_match = re.search(r"https?://\S+", text)
+        if url_match:
+            entities["url"] = url_match.group(0)
+
+        product_query = self._extract_product_query(text)
+        if product_query:
+            entities["product"] = product_query
+
+        return entities
+
+    def _extract_keywords(self, lower_text: str) -> list[str]:
+        words = re.findall(r"[a-z0-9]+", lower_text)
+        keywords: list[str] = []
+        seen: set[str] = set()
+        for word in words:
+            if len(word) < 3 or word in self.NLP_STOPWORDS:
+                continue
+            if word in seen:
+                continue
+            seen.add(word)
+            keywords.append(word)
+            if len(keywords) >= 8:
+                break
+        return keywords
+
+    def _build_short_summary(self, text: str, intent: str) -> str:
+        compact = " ".join(text.strip().split())
+        if len(compact) > 140:
+            compact = compact[:137].rstrip() + "..."
+        return f"Intent '{intent}' from: {compact}"
+
+    def _build_reply_suggestion(self, intent: str, entities: dict[str, Any]) -> str:
+        if intent == "todo_add":
+            return "Task captured. Use /p:high or /d:YYYY-MM-DD for details."
+        if intent == "todo_list":
+            return "Listing tasks. You can filter by open/done/high/overdue."
+        if intent == "todo_update":
+            return "Task update detected. I can apply it now."
+        if intent in {"product_search", "web_search"}:
+            product = str(entities.get("product", "")).strip()
+            if product:
+                return f"I can fetch live links and suggestions for '{product}'."
+            return "I can fetch live web results and source links."
+        if intent == "greeting":
+            return "Hi. Share what you want to manage and I will handle it."
+        if intent == "question":
+            return "I can answer this with live web + app context."
+        return "I can help with todos, products, and web search."
 
     def _search_todos(self, query: str) -> list[tuple[int, dict[str, object]]]:
         return [
