@@ -1,6 +1,7 @@
 import os
 import re
 from typing import Optional
+from urllib.parse import quote_plus
 
 import requests
 
@@ -12,13 +13,18 @@ class TodoChatbot:
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip()
         self.system_prompt = (
             "You are a concise, helpful assistant for a todo app. "
-            "Give practical answers and keep responses short."
+            "Give practical answers and keep responses short. "
+            "If user asks for product suggestions, recommend good options."
         )
 
     def reply(self, message: str) -> str:
         local_result = self._handle_todo_command(message)
         if local_result is not None:
             return local_result
+
+        product_result = self._handle_product_request(message)
+        if product_result is not None:
+            return product_result
 
         if self.api_key:
             llm_response = self._ask_openai(message)
@@ -37,7 +43,11 @@ class TodoChatbot:
                 "- add <task>\n"
                 "- list\n"
                 "- done <number>\n"
-                "- delete <number>"
+                "- delete <number>\n\n"
+                "Product queries:\n"
+                "- suggest laptop under 800\n"
+                "- best phone for gaming\n"
+                "- buy running shoes"
             )
 
         add_match = re.match(r"^(add|new|todo)\s+(.+)$", text, flags=re.IGNORECASE)
@@ -73,6 +83,80 @@ class TodoChatbot:
             return f"Deleted task #{idx}: {removed['text']}"
 
         return None
+
+    def _handle_product_request(self, message: str) -> Optional[str]:
+        product_query = self._extract_product_query(message)
+        if not product_query:
+            return None
+
+        links = self._build_shopping_links(product_query)
+        link_text = "\n".join(f"- {store}: {url}" for store, url in links.items())
+
+        if self.api_key:
+            recommendation_prompt = (
+                "Suggest 3 concrete products for this shopping request. "
+                "Keep it concise and practical.\n"
+                f"Request: {product_query}"
+            )
+            recommendation = self._ask_openai(recommendation_prompt)
+            if recommendation:
+                return (
+                    f"Top picks for '{product_query}':\n"
+                    f"{recommendation}\n\n"
+                    "Buy links:\n"
+                    f"{link_text}"
+                )
+
+        return (
+            f"Online links for '{product_query}':\n"
+            f"{link_text}\n\n"
+            "Share your budget and preferred brand, and I will narrow it down."
+        )
+
+    def _extract_product_query(self, message: str) -> Optional[str]:
+        text = message.strip()
+        lower = text.lower()
+
+        patterns = [
+            r"^(?:buy|get|purchase|order)\s+(.+)$",
+            r"^(?:recommend|suggest)\s+(?:me\s+)?(?:a|an|the\s+)?(.+)$",
+            r"^(?:best)\s+(.+)$",
+            r"^i\s+(?:want|need)\s+to\s+buy\s+(.+)$",
+            r"^what\s+is\s+the\s+best\s+(.+)$",
+            r"^which\s+(.+?)\s+should\s+i\s+buy\??$",
+        ]
+
+        for pattern in patterns:
+            match = re.match(pattern, lower, flags=re.IGNORECASE)
+            if match:
+                candidate = match.group(1).strip(" .?!")
+                if candidate:
+                    return candidate
+
+        # Support natural queries like: "Can you suggest a laptop under 800?"
+        if any(
+            keyword in lower
+            for keyword in ("recommend", "suggest", "best", "buy", "purchase")
+        ):
+            candidate = re.sub(
+                r"^(can you|please|hey|hi|hello|could you)\s+",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            ).strip(" .?!")
+            if candidate:
+                return candidate
+
+        return None
+
+    def _build_shopping_links(self, query: str) -> dict[str, str]:
+        encoded = quote_plus(query)
+        return {
+            "Amazon": f"https://www.amazon.com/s?k={encoded}",
+            "Walmart": f"https://www.walmart.com/search?q={encoded}",
+            "Best Buy": f"https://www.bestbuy.com/site/searchpage.jsp?st={encoded}",
+            "Target": f"https://www.target.com/s?searchTerm={encoded}",
+        }
 
     def _ask_openai(self, message: str) -> Optional[str]:
         url = "https://api.openai.com/v1/responses"
@@ -126,9 +210,10 @@ class TodoChatbot:
             return "Doing well. Want to add a task?"
 
         return (
-            "I can help with todos right now. Use:\n"
+            "I can help with todos and product links. Use:\n"
             "- add <task>\n"
             "- list\n"
             "- done <number>\n"
-            "- delete <number>"
+            "- delete <number>\n"
+            "- suggest <product>"
         )

@@ -141,6 +141,12 @@
         animation: rise 180ms ease;
       }
 
+      .msg a {
+        color: #0b5ea8;
+        text-decoration: underline;
+        word-break: break-all;
+      }
+
       .msg.user {
         margin-left: auto;
         background: var(--user);
@@ -259,12 +265,78 @@
       let offlineModeNotified = false;
       const offlineTodos = [];
 
+      function escapeHtml(value) {
+        return value
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function formatTextWithLinks(text) {
+        const escaped = escapeHtml(text);
+        const withLinks = escaped.replace(
+          /(https?:\/\/[^\s]+)/g,
+          '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+        );
+        return withLinks.replaceAll("\n", "<br>");
+      }
+
       function addMessage(role, text) {
         const message = document.createElement("div");
         message.className = `msg ${role}`;
-        message.textContent = text;
+        if (role === "bot") {
+          message.innerHTML = formatTextWithLinks(text);
+        } else {
+          message.textContent = text;
+        }
         messagesEl.appendChild(message);
         messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      function extractProductQuery(text) {
+        const trimmed = text.trim();
+        const lower = trimmed.toLowerCase();
+        const patterns = [
+          /^(?:buy|get|purchase|order)\s+(.+)$/i,
+          /^(?:recommend|suggest)\s+(?:me\s+)?(?:a|an|the\s+)?(.+)$/i,
+          /^(?:best)\s+(.+)$/i,
+          /^i\s+(?:want|need)\s+to\s+buy\s+(.+)$/i,
+          /^what\s+is\s+the\s+best\s+(.+)$/i,
+          /^which\s+(.+?)\s+should\s+i\s+buy\??$/i,
+        ];
+
+        for (const pattern of patterns) {
+          const match = trimmed.match(pattern);
+          if (match && match[1]) {
+            const candidate = match[1].trim().replace(/[.?!]+$/, "");
+            if (candidate) return candidate;
+          }
+        }
+
+        if (
+          ["recommend", "suggest", "best", "buy", "purchase"].some((keyword) =>
+            lower.includes(keyword)
+          )
+        ) {
+          return trimmed
+            .replace(/^(can you|please|hey|hi|hello|could you)\s+/i, "")
+            .trim()
+            .replace(/[.?!]+$/, "");
+        }
+
+        return null;
+      }
+
+      function buildProductLinks(query) {
+        const encoded = encodeURIComponent(query);
+        return [
+          `Amazon: https://www.amazon.com/s?k=${encoded}`,
+          `Walmart: https://www.walmart.com/search?q=${encoded}`,
+          `Best Buy: https://www.bestbuy.com/site/searchpage.jsp?st=${encoded}`,
+          `Target: https://www.target.com/s?searchTerm=${encoded}`,
+        ];
       }
 
       function getOfflineReply(message) {
@@ -277,7 +349,11 @@
             "- add <task>\n" +
             "- list\n" +
             "- done <number>\n" +
-            "- delete <number>"
+            "- delete <number>\n\n" +
+            "Product queries:\n" +
+            "- suggest laptop under 800\n" +
+            "- best phone for gaming\n" +
+            "- buy running shoes"
           );
         }
 
@@ -322,6 +398,14 @@
           return `Deleted task #${index}: ${removed.text}`;
         }
 
+        const productQuery = extractProductQuery(text);
+        if (productQuery) {
+          return (
+            `Online links for '${productQuery}':\n` +
+            `${buildProductLinks(productQuery).map((line) => `- ${line}`).join("\n")}`
+          );
+        }
+
         if (["hi", "hello", "hey"].some((greeting) => lower.includes(greeting))) {
           return "Hi! I can manage todos. Try: add buy milk";
         }
@@ -333,11 +417,12 @@
         }
 
         return (
-          "I can help with todos right now. Use:\n" +
+          "I can help with todos and product links. Use:\n" +
           "- add <task>\n" +
           "- list\n" +
           "- done <number>\n" +
-          "- delete <number>"
+          "- delete <number>\n" +
+          "- suggest <product>"
         );
       }
 
